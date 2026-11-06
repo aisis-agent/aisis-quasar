@@ -15,7 +15,7 @@ class GigaAMSTTSession extends STTBackendSession {
   private readonly opusProcessor: OpusProcessor
   private spanEnded = false
   private stopped = false
-  private finalSeen = false
+  private rateSent = false
   private finishPromise: Promise<void> | null = null
   private resolveFinish: (() => void) | null = null
   private rejectFinish: ((error: Error) => void) | null = null
@@ -24,7 +24,13 @@ class GigaAMSTTSession extends STTBackendSession {
     super()
     this.opusProcessor = new OpusProcessor(
       data => this.send(data, true),
-      sampleRate => this.send(JSON.stringify({ sample_rate: sampleRate }), false)
+      sampleRate => {
+        // The gateway closes the socket on a second init; a resynced OpusHead
+        // re-emits the rate mid-stream (decode always runs on the 48k clock).
+        if (this.rateSent) return Promise.resolve()
+        this.rateSent = true
+        return this.send(JSON.stringify({ sample_rate: sampleRate }), false)
+      }
     )
 
     webSocket.on('message', (message) => {

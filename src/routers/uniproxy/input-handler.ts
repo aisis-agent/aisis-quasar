@@ -1,6 +1,7 @@
 import { Span, startInactiveSpan } from '@sentry/node'
 
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
+import { matchFastIntent } from '../../backend/ha-intents'
 import { getLogger } from '../../logger'
 import { Notifier } from '../../notifier'
 import proto from '../../protos/protos'
@@ -303,6 +304,29 @@ export class InputHandler {
 
   async processVoiceInput (input: VoiceInput, parentSpan?: Span): Promise<InputResult> {
     this.logger.debug(`Received VoiceInput: ${input.text}`)
+    // Fast local intents (lights, sockets, AC, speaker volume, state queries)
+    // run before the LLM brain. Commands execute silently (text: null); every
+    // fast turn keeps the dialog listening for a wake-free follow-up. A
+    // clarified ambiguity reroutes the ORIGINAL phrase to the brain.
+    const fastIntent = await matchFastIntent(input.text)
+    let brainText = input.text
+    if (fastIntent !== null && fastIntent.kind === 'reply') {
+      this.logger.info(`Fast intent for '${input.text}': ${fastIntent.text ?? '(silent)'}`)
+      return {
+        dialogFinished: false,
+        directives: [
+          ...fastIntent.quasarDirectives.map(directive => ({ quasarDirective: directive })),
+          ttsPlayPlaceholderDirective()
+        ],
+        shouldListen: true,
+        text: fastIntent.text
+      }
+    }
+    if (fastIntent !== null && fastIntent.kind === 'llm') {
+      this.logger.info(`Fast intent routing '${input.text}' to LLM as '${fastIntent.text}'`)
+      brainText = fastIntent.text
+    }
+
     if (!this.session) {
       this.logger.warn('No session opened')
       return {
@@ -316,7 +340,7 @@ export class InputHandler {
 
     await this.session.process({
       metadata: input.metadata,
-      text: input.text
+      text: brainText
     })
     this.requestSent = true
     // Voice turns keep the Alice session listening for follow-ups without a new

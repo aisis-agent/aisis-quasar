@@ -12,8 +12,10 @@ import { StationInfoProvider } from '../../storage/types'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
 import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, setLocationDirective, setTimezoneDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage2SemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
-import { AlarmMetadata, InputHandler, InputMetadata, InputResult, TextInput, TimerMetadata } from './input-handler'
-import { VoiceInputHandler } from './voice-input-handler'
+import { OggOpusStreamStitcher } from '../../codecs/ogg-stitcher'
+ import { AlarmMetadata, InputHandler, InputMetadata, InputResult, TextInput, TimerMetadata } from './input-handler'
+import { splitSentencesForTts } from './sentence-splitter'
+ import { VoiceInputHandler } from './voice-input-handler'
 
 type TServerMessage = proto.NAlice.NAliceApi.ITServerMessage
 const TServerMessageClass = proto.NAlice.NAliceApi.TServerMessage
@@ -399,10 +401,15 @@ export class UniProxyConnection {
       return
     }
 
-    const closeReason = clientMessage.StreamControl!.Close?.Reason
-    if (!closeReason) {
+    // EReason.OK(0) is a valid close reason: protobuf omits zero scalars, so
+    // the old falsy check dropped the station's normal end-of-utterance close,
+    // STT never finalized and the dialog died in silence until the station
+    // gave up. Only a missing Close means "no close"; an absent Reason is OK.
+    const close = clientMessage.StreamControl!.Close
+    if (!close) {
       return
     }
+    const closeReason = close.Reason ?? proto.NAlice.NAliceApi.TStreamControl.TActionClose.EReason.OK
 
     switch (closeReason) {
       case proto.NAlice.NAliceApi.TStreamControl.TActionClose.EReason.CANCEL: {
@@ -897,29 +904,98 @@ export class UniProxyConnection {
         })
       }
 
-      let audioData: Buffer = Buffer.from([])
-      try {
-        if (result.text !== '') {
-          const ttsResult = await this.parameters.tts.synthesize({
-            parentSpan: span ?? this.inputSpan ?? this.dialogSpan,
-            text: result.text
-          })
-          audioData = ttsResult.voiceOutput
+      const parentSpan = span ?? this.inputSpan ?? this.dialogSpan
+      // Streaming TTS (quasard pattern): split the reply into sentences, put
+      // the first synthesized sentence on the wire while the rest is still
+      // synthesizing, and restitch every segment into one continuous Ogg
+      // stream so the speaker hears gapless audio (oggSpeech pattern).
+      const sentences = result.text === '' ? [] : splitSentencesForTts(result.text)
+      const startedAt = Date.now()
+
+      if (sentences.length <= 1) {
+        let audioData: Buffer = Buffer.from([])
+        try {
+          if (result.text !== '') {
+            const ttsResult = await this.parameters.tts.synthesize({ parentSpan, text: result.text })
+            audioData = ttsResult.voiceOutput
+          }
+        } catch (error) {
+          this.logger.error('Failed to synthesize TTS: ', error)
         }
+
+        span?.end()
+
+        this.logger.info(`Synthesized: ${audioData.length}`)
+
+        try {
+          await this.sendTTS(audioData, referenceMessageId)
+        } catch (error) {
+          this.logger.error('Failed to send TtsSpeak in sendInputResult: ', error)
+          this.closeConnection()
+        }
+        return
+      }
+
+      this.lastOutputAudioStreamId++
+      const streamId = this.lastOutputAudioStreamId
+      const stitcher = new OggOpusStreamStitcher()
+      let sentFirst = false
+      let totalBytes = 0
+      try {
+        await this.sendServerMessage({
+          Event: {
+            Header: {
+              MessageId: randomUUID(),
+              RefMessageId: referenceMessageId,
+              StreamId: streamId
+            },
+            TtsSpeak: {
+              Format: 'audio/opus',
+              LazyTtsStreaming: false,
+            }
+          },
+          Timings: this.getTimings()
+        })
+        for (let index = 0; index < sentences.length; index++) {
+          let segment: Buffer
+          try {
+            segment = (await this.parameters.tts.synthesize({
+              parentSpan,
+              text: sentences[index]
+            })).voiceOutput
+          } catch (error) {
+            this.logger.error(`Failed to synthesize TTS sentence ${index + 1}/${sentences.length}: `, error)
+            break
+          }
+          try {
+            await this.sendAudioDataMessage(streamId, stitcher.append(segment, index === sentences.length - 1))
+          } catch (error) {
+            this.logger.error('Failed to send TTS audio segment: ', error)
+            break
+          }
+          totalBytes += segment.length
+          if (!sentFirst) {
+            sentFirst = true
+            this.logger.info(`Synthesized first sentence (1/${sentences.length}) sent after ${Date.now() - startedAt}ms: ${sentences[0]}`)
+          }
+        }
+        await this.sendServerMessage({
+          StreamControl: {
+            Close: {},
+            MessageId: randomUUID(),
+            StreamId: streamId
+          },
+          Timings: this.getTimings()
+        })
       } catch (error) {
-        this.logger.error('Failed to synthesize TTS: ', error)
+        this.logger.error('Failed to send TtsSpeak in sendInputResult: ', error)
+        span?.end()
+        this.closeConnection()
+        return
       }
 
       span?.end()
-
-      this.logger.info(`Synthesized: ${audioData.length}`)
-
-      try {
-        await this.sendTTS(audioData, referenceMessageId)
-      } catch (error) {
-        this.logger.error('Failed to send TtsSpeak in sendInputResult: ', error)
-        this.closeConnection()
-      }
+      this.logger.info(`Synthesized (streamed): ${sentences.length} sentences, ${totalBytes} bytes, total ${Date.now() - startedAt}ms`)
     }
   }
 
@@ -1009,7 +1085,7 @@ export class UniProxyConnection {
       try {
         await this.inputHandlerOpenSessionPromise
         inputResult = await this.inputHandler.processVoiceInput({
-          metadata: event.metadata,
+          metadata: { ...event.metadata, stationId: this.deviceId },
           text: event.text
         }, this.inputSpan ?? this.dialogSpan)
       } catch (error) {

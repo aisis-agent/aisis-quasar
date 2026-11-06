@@ -18,6 +18,7 @@ export class OpusProcessor {
   private packetBytes = 0
   private serial: number | null = null
   private nextSequence: number | null = null
+  private synthesizedHead = false
 
   constructor (private readonly onAudioData: (data: Buffer) => Promise<void>,
     private readonly onSampleRate: (sampleRate: number) => Promise<void>) {}
@@ -60,6 +61,8 @@ export class OpusProcessor {
       console.warn('[opus-processor] stream serial change: expected', this.serial, 'got', page.streamSerialNumber, '- resyncing')
       this.packetSegments = []
       this.packetBytes = 0
+      this.encoder = null
+      this.synthesizedHead = false
     }
     if (this.nextSequence !== null && page.pageSequenceNumber !== this.nextSequence) {
       console.warn('[opus-processor] page sequence jump: expected', this.nextSequence, 'got', page.pageSequenceNumber)
@@ -91,7 +94,8 @@ export class OpusProcessor {
 
   private async handleOpusPacket (packet: Buffer): Promise<void> {
     if (packet.subarray(0, 8).equals(OPUS_HEAD_BUFFER)) {
-      if (this.encoder !== null) throw new Error('Unexpected second OpusHead')
+      if (this.encoder !== null && !this.synthesizedHead) throw new Error('Unexpected second OpusHead')
+      this.synthesizedHead = false
       const head = parseOpusHead(packet)
       if (head.channelCount !== 1) {
         throw new Error(`Unsupported number of channels: ${head.channelCount}`)
@@ -104,7 +108,15 @@ export class OpusProcessor {
       await this.onSampleRate(decodeRate)
       return
     }
-    if (this.encoder === null) throw new Error("Can't decode Opus without OpusHead")
+    if (this.encoder === null) {
+      // After a reconnect the speaker's stream can resume mid-stream without
+      // its header page; synthesize the stock uplink defaults (16kHz mono,
+      // RFC7845 input rate is informational — decode runs on the 48k clock).
+      console.warn('[opus-processor] synthesized default OpusHead (16kHz mono)')
+      this.encoder = new OpusEncoder(48000, 1)
+      this.synthesizedHead = true
+      await this.onSampleRate(48000)
+    }
     // The comment header may itself span several pages. Page number alone is
     // not a header boundary, and its continuation must not reach the decoder.
     if (packet.subarray(0, 8).equals(Buffer.from('OpusTags'))) return
