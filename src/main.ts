@@ -43,6 +43,8 @@ const updatesConfig = environment.ALLOW_UPDATES && environment.UPDATES_CONFIG_PA
   : { updates: {} }
 
 Sentry.init({
+  // Do not ship voice transcripts to a placeholder telemetry DSN.
+  enabled: false,
   defaultIntegrations: false,
   dsn: environment.SENTRY_DSN,
   sampleRate: 1,
@@ -633,7 +635,7 @@ try {
 }
 
 try {
-  apiServer.listen(environment.API_PORT, () => {
+  apiServer.listen({ port: environment.API_PORT, hostname: '127.0.0.1' }, () => {
     logger.info(`Started API on :${environment.API_PORT}`)
   })
 } catch (error) {

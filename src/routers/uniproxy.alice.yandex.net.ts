@@ -15,7 +15,9 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
   const wsServer = new WSServer({ noServer: true })
 
   server.on('upgrade', (request, socket, head) => {
-    if (request.url === '/uniproxy.alice.yandex.net/uni.ws') {
+    // The local TLS proxy forwards both the bare service path and the
+    // host-prefixed form; accept either.
+    if (request.url && (request.url === '/uni.ws' || request.url === '/uniproxy.alice.yandex.net/uni.ws' || request.url === '/uni.ws-with-prefix' || request.url === '/uniproxy.alice.yandex.net/uni.ws-with-prefix')) {
       wsServer.handleUpgrade(request, socket, head, client => {
         wsServer.emit('connection', client, request)
       })
@@ -29,7 +31,8 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
   wsServer.on('connection', (websocket, request) => {
     logger.debug('Got WebSocket connection')
 
-    const deviceId = String(request.headers['x-uprx-device-id']) ?? 'unknown'
+    const deviceId = String(request.headers['x-uprx-device-id'] ?? '')
+    if (!deviceId) { websocket.close(1008, 'missing device id'); return }
     const platform = String(request.headers['x-uprx-device-model']) ?? 'unknown'
     if (!router.connections.has(deviceId)) {
       router.connections.set(deviceId, new Set())

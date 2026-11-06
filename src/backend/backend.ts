@@ -72,6 +72,9 @@ export abstract class MusicBackend {
 export abstract class STTBackendSession {
   private callback: null | STTChunkTranscribeCallback = null
 
+  // Optional backends may finish synchronously; streaming backends override.
+  async finish (): Promise<void> {}
+
   abstract close (): void
 
   setCallback (callback: STTChunkTranscribeCallback): void {

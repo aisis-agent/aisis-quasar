@@ -15,6 +15,10 @@ class GigaAMSTTSession extends STTBackendSession {
   private readonly opusProcessor: OpusProcessor
   private spanEnded = false
   private stopped = false
+  private finalSeen = false
+  private finishPromise: Promise<void> | null = null
+  private resolveFinish: (() => void) | null = null
+  private rejectFinish: ((error: Error) => void) | null = null
 
   constructor (private readonly webSocket: WebSocket, private readonly span?: Span) {
     super()
@@ -24,10 +28,14 @@ class GigaAMSTTSession extends STTBackendSession {
     )
 
     webSocket.on('message', (message) => {
-      if (this.stopped) return
+      if (this.stopped || this.finalSeen) return
       const simplifiedMessage = Array.isArray(message) ? Buffer.concat(message) : Buffer.from(message as ArrayBuffer)
       const response = JSON.parse(simplifiedMessage.toString('utf8')) as GigaAMMessage
       if (!this.stopped) {
+        if (response.end_of_utt) {
+          this.finalSeen = true
+          this.resolveFinish?.()
+        }
         this.chunkTranscribed({
           endOfUtt: response.end_of_utt,
           text: response.text
@@ -36,12 +44,31 @@ class GigaAMSTTSession extends STTBackendSession {
     })
     webSocket.on('close', () => {
       this.stopped = true
+      if (!this.finalSeen) this.rejectFinish?.(new Error('STT closed before final result'))
     })
   }
 
+  async finish (): Promise<void> {
+    if (this.finalSeen) return
+    this.opusProcessor.finish()
+    if (this.finishPromise) return this.finishPromise
+    if (this.stopped) throw new Error('STT session already closed')
+    const timer = setTimeout(() => {
+      this.rejectFinish?.(new Error('STT final result timed out'))
+      this.close()
+    }, 40000)
+    const { promise, resolve, reject } = Promise.withResolvers<void>()
+    this.resolveFinish = () => { clearTimeout(timer); resolve() }
+    this.rejectFinish = error => { clearTimeout(timer); reject(error) }
+    this.finishPromise = promise
+    // Normal native EOF is explicit; websocket close remains immediate cancel.
+    void this.send(JSON.stringify({ type: 'finish' }), false)
+    await this.finishPromise
+  }
+
   close (): void {
-    if (this.stopped) return
     this.stopped = true
+    if (!this.finalSeen) this.rejectFinish?.(new Error('STT session cancelled'))
     if (!this.spanEnded) {
       this.spanEnded = true
       this.span?.end()
@@ -53,8 +80,13 @@ class GigaAMSTTSession extends STTBackendSession {
 
   async transcribeChunk (chunk: Buffer): Promise<void> {
     if (this.stopped) return
-    await this.opusProcessor.handleAudioData(chunk)
+    try {
+      await this.opusProcessor.handleAudioData(chunk)
+    } catch (error) {
+      this.logger.warn({ event: 'opus_audio_chunk_failed', error: String(error) })
+    }
   }
+
 
   private send (data: Buffer | string, binary: boolean): Promise<void> {
     if (this.stopped || this.webSocket.readyState !== this.webSocket.OPEN) {

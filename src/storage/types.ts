@@ -107,8 +107,8 @@ const rawQuasarConfig = z.object({
   }),
   systemConfig: z.object({
     adbd: z.object({
-      network: z.boolean().default(true),
-      remoteActivation: z.boolean().default(true)
+      network: z.boolean().default(false),
+      remoteActivation: z.boolean().default(false)
     }),
     addAllEmbeddedEndpoints: z.boolean().default(true),
     alarmd: z.object({
@@ -4773,14 +4773,8 @@ const rawQuasarConfig = z.object({
         'uniproxy.alice.yandex.net',
         'scbh.yandex.net'
       ]),
-      enable: z.boolean().default(true),
-      forwarders: z.array(z.string()).default([
-        '77.88.8.1',
-        '77.88.8.8',
-        '77.88.8.88',
-        '77.88.8.2',
-        '1.1.1.1'
-      ]),
+      enable: z.boolean().default(false),
+      forwarders: z.array(z.string()).default([]),
       serverParams: z.array(z.string()).default([
         'msg-cache-size: 2m',
         'rrset-cache-size: 2m',

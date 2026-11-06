@@ -18,6 +18,7 @@ export const OggParser = {
     let position = 0
     const dataView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength)
     while (position < dataView.byteLength) {
+      if (dataView.byteLength - position < 27) throw new Error('Truncated Ogg page header')
       const magic = dataView.getUint32(position, false)
       if (magic !== 0x4F_67_67_53) {
         throw new Error('Not an Ogg chunk')
@@ -32,12 +33,15 @@ export const OggParser = {
       const pageSequenceNumber = dataView.getUint32(position + 18, true)
       const pageChecksum = dataView.getUint32(position + 22, true)
       const segmentsCount = dataView.getUint8(position + 26)
+      if (position + 27 + segmentsCount > dataView.byteLength) throw new Error('Truncated Ogg lacing table')
       const segmentSizes = []
       for (let index = 0; index < segmentsCount; index++) {
         segmentSizes.push(dataView.getUint8(position + 27 + index))
       }
 
       position += 27 + segmentsCount
+      const bodyLength = segmentSizes.reduce((sum, value) => sum + value, 0)
+      if (position + bodyLength > dataView.byteLength) throw new Error('Truncated Ogg page body')
 
       const segments = []
       for (const segmentSize of segmentSizes) {

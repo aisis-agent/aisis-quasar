@@ -319,10 +319,13 @@ export class InputHandler {
       text: input.text
     })
     this.requestSent = true
-    return await this.getPartialResponseResult(input.metadata, parentSpan)
+    // Voice turns keep the Alice session listening for follow-ups without a new
+    // wake word: ShouldListen=true makes the station keep the mic open and send
+    // the next VoiceInput within the same dialog.
+    return await this.getPartialResponseResult(input.metadata, parentSpan, true)
   }
 
-  private async getPartialResponseResult (metadata: InputMetadata, parentSpan?: Span): Promise<InputResult> {
+  private async getPartialResponseResult (metadata: InputMetadata, parentSpan?: Span, continueListening = false): Promise<InputResult> {
     if ((!this.session || !this.requestSent) && this.partialResponses.length === 0) {
       return {
         dialogFinished: true,
@@ -366,19 +369,20 @@ export class InputHandler {
       span?.setAttribute('directives', JSON.stringify(partialResponse.directives, undefined, 2))
       span?.end()
       this.logger.debug('Partial response is finished')
-      if (partialResponse.finished && !partialResponse.shouldListen) {
+      const shouldListen = partialResponse.shouldListen || continueListening
+      if (!shouldListen) {
         this.logger.debug('Partial response is finished, and no more input is required - closing')
         this.closeSession()
       }
       return {
-        dialogFinished: !partialResponse.shouldListen,
+        dialogFinished: !shouldListen,
         directives: [
           ...(partialResponse.directives.map(directive =>
             this.properties.directiveFunctionProvider
               .convertToWrappedDirective(directive, metadata)).filter(Boolean) as WrappedDirective[]),
           ttsPlayPlaceholderDirective()
         ],
-        shouldListen: partialResponse.shouldListen,
+        shouldListen,
         text: partialResponse.text
       }
     }

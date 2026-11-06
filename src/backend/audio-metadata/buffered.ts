@@ -78,7 +78,11 @@ class BufferedAudioMetadataBackendSession extends AudioMetadataBackendSession {
   }
 
   async processChunk (chunk: Buffer): Promise<void> {
-    await this.opusProcessor.handleAudioData(chunk)
+    try {
+      await this.opusProcessor.handleAudioData(chunk)
+    } catch (error) {
+      console.warn('[buffered-audio] audio chunk failed:', String(error))
+    }
   }
 }
 
