@@ -1,0 +1,11 @@
+# Repo-level rig config for the aisis fork of v3rt3p/quasar-server.
+# The complexity limits are a baseline for code inherited from upstream and from the
+# production images this fork was recovered from (matchFastIntent and similar
+# long dispatchers); they are not a target for new code.
+version: 1
+lint_checks:
+  enabled: true
+  complexity:
+    enabled: true
+    max_cognitive: 120
+    max_cyclomatic: 80
