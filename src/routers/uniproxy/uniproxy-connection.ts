@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto'
 import { RawData, WebSocket } from 'ws'
 
 import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
+import { pickFiller } from '../../backend/fillers'
 import { getLogger } from '../../logger'
 import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
@@ -1083,6 +1084,17 @@ export class UniProxyConnection {
 
       let inputResult: InputResult
       try {
+        // Slow turn predicted (LLM brain / registry refresh): speak a short
+        // pre-recorded filler IMMEDIATELY so the owner is not met with silence.
+        const filler = pickFiller(event.text)
+        if (filler !== null) {
+          try {
+            await this.sendTTS(filler.audio, this.voiceInputReferenceMessageId)
+            this.logger.info(`Filler '${filler.text}' (${filler.audio.length}b) sent`)
+          } catch (error) {
+            this.logger.warn('Failed to send filler TTS: ', error)
+          }
+        }
         await this.inputHandlerOpenSessionPromise
         inputResult = await this.inputHandler.processVoiceInput({
           metadata: { ...event.metadata, stationId: this.deviceId },

@@ -94,7 +94,11 @@ export class OpusProcessor {
 
   private async handleOpusPacket (packet: Buffer): Promise<void> {
     if (packet.subarray(0, 8).equals(OPUS_HEAD_BUFFER)) {
-      if (this.encoder !== null && !this.synthesizedHead) throw new Error('Unexpected second OpusHead')
+      // The station restarts its uplink stream (fresh OpusHead, page 0)
+      // whenever the mic reopens mid-session; a repeated head is a resync,
+      // not a protocol violation. Drop the unterminated packet, if any.
+      this.packetSegments = []
+      this.packetBytes = 0
       this.synthesizedHead = false
       const head = parseOpusHead(packet)
       if (head.channelCount !== 1) {

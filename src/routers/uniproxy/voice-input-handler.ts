@@ -166,6 +166,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
       if (epoch !== this.epoch || !this.active || this.sttSession !== sttSession) return
       this.lastTranscribeResult = text
       this.emit('transcribed', { text })
+      if (endOfUtt && text.trim() !== "") this.logger.info(`Heard: ${text}`)
       if (endOfUtt) void this.finalize(epoch)
     })
 

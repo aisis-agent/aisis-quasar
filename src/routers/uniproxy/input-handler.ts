@@ -271,6 +271,23 @@ export class InputHandler {
         }
       }
       case 'text': {
+        // The station sends spoken commands as plain text TextInput follow-ups
+        // (e.g. «выключи свет» after a silent turn); run them through the same
+        // fast-intent layer as voice before giving up on the text.
+        const fastIntent = await matchFastIntent(input.data.text)
+        if (fastIntent !== null && fastIntent.kind !== 'llm') {
+          this.logger.info(`Fast intent for text '${input.data.text}': ${fastIntent.text ?? '(executed, silent)'}`)
+          return {
+            dialogFinished: true,
+            directives: [
+              ...fastIntent.quasarDirectives.map(directive => ({ quasarDirective: directive })),
+              // Silent executions must not trigger the waiting earcon.
+              ...(fastIntent.text !== null ? [ttsPlayPlaceholderDirective()] : [])
+            ],
+            shouldListen: false,
+            text: fastIntent.text
+          }
+        }
         const directive = textToDirectiveMap[input.data.text]
         if (!directive) {
           this.logger.warn(`Received text TextInput with unknown text: '${input.data.text}'`)
@@ -316,7 +333,10 @@ export class InputHandler {
         dialogFinished: false,
         directives: [
           ...fastIntent.quasarDirectives.map(directive => ({ quasarDirective: directive })),
-          ttsPlayPlaceholderDirective()
+          // The placeholder is the station's waiting earcon: only send it when
+          // speech follows. Silent executions (text: null) must close the turn
+          // with no sound at all, exactly like stock smart-home commands.
+          ...(fastIntent.text !== null ? [ttsPlayPlaceholderDirective()] : [])
         ],
         shouldListen: true,
         text: fastIntent.text
@@ -404,7 +424,9 @@ export class InputHandler {
           ...(partialResponse.directives.map(directive =>
             this.properties.directiveFunctionProvider
               .convertToWrappedDirective(directive, metadata)).filter(Boolean) as WrappedDirective[]),
-          ttsPlayPlaceholderDirective()
+          // Directive-only finishes (text: null) close silently: the waiting
+          // earcon must not play when no TTS is coming.
+          ...(partialResponse.text ? [ttsPlayPlaceholderDirective()] : [])
         ],
         shouldListen,
         text: partialResponse.text
