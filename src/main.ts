@@ -84,6 +84,10 @@ app.use(bodyParser.raw({
   type: 'text/yandex-token'
 }))
 
+const musicBackend = environment.MUSIC_SERVICE_BASIC_URL
+  ? new BasicMusicBackend(environment.MUSIC_SERVICE_BASIC_URL)
+  : new StubMusicBackend()
+
 registerClckYandexNetRouter(app)
 registerReportAppMetricaYandexNetRouter(app)
 registerQuasarYandexNetRouter(app, {
@@ -96,7 +100,8 @@ registerMobileproxyPassportYandexNetRouter(app)
 registerStartupMobileYandexNetRouter(app)
 registerScbhYandexNetRouter(app)
 registerRpcAliceYandexNetRouter(app, {
-  infoProvider: storage
+  infoProvider: storage,
+  music: musicBackend
 })
 registerQuasarV3rt3pRouter(app)
 
@@ -110,9 +115,8 @@ const server = app.listen(environment.PORT, error => {
 
 const uniProxyRouter = registerUniproxyAliceYandexNetRouter({
   audioMetadata: new BufferedAudioMetadataBackend(environment.AUDIO_METADATA_URLS),
-  musicManager: new MusicManager(environment.MUSIC_SERVICE_BASIC_URL
-    ? new BasicMusicBackend(environment.MUSIC_SERVICE_BASIC_URL)
-    : new StubMusicBackend()),
+  music: musicBackend,
+  musicManager: new MusicManager(musicBackend),
   processor: new BasicProcessorBackend(environment.PROCESSOR_BASIC_URL),
   storage,
   stt: new GigaAMSTTBackend(environment.STT_GIGAAM_URL),
@@ -515,20 +519,20 @@ functionStateServer.put('/functions', async ({ body }) => {
     supportedDevices: Set<string>
   }> = new Map()
 
-  const allDevics = new Set<string>()
+  const allDevices = new Set<string>()
 
   for (const [deviceId, connections] of uniProxyRouter.connections) {
     if (deviceId === calledDeviceId) {
       continue
     }
 
-    allDevics.add(deviceId)
-
     const connection = connections.values().next().value
 
     if (!connection) {
       continue
     }
+
+    allDevices.add(deviceId)
 
     const functions = connection.getDirectiveFunctionProvider().getSupportedFunctions()
 
@@ -547,7 +551,7 @@ functionStateServer.put('/functions', async ({ body }) => {
   }
 
   for (const [name, info] of allFunctions.entries()) {
-    const isSupportedOnAllDevices = allDevics.size === info.supportedDevices.size
+    const isSupportedOnAllDevices = allDevices.size === info.supportedDevices.size
 
     totalFunctions[`other_${name}`] = {
       arguments: z.object({
@@ -559,12 +563,14 @@ functionStateServer.put('/functions', async ({ body }) => {
     }
   }
 
-  totalFunctions['other_smart_speaker_tts'] = {
-    arguments: z.object({
-      deviceId: z.string().describe('device ID to execute on or "all" if on all'),
-      text: z.string().describe('text to speak')
-    }),
-    description: 'Say some text on other speaker (supported on all speakers)'
+  if (allDevices.size > 0) {
+    totalFunctions['other_smart_speaker_tts'] = {
+      arguments: z.object({
+        deviceId: z.string().describe('device ID to execute on or "all" if on all'),
+        text: z.string().describe('text to speak')
+      }),
+      description: 'Say some text on other speaker (supported on all speakers)'
+    }
   }
 
   return Object.fromEntries(Object.entries(totalFunctions)

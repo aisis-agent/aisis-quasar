@@ -1,4 +1,4 @@
-import { MusicTrack } from '@v3rt3p/types/music'
+import { MusicTrackWithUrl } from '@v3rt3p/types/music'
 import { randomUUID } from 'node:crypto'
 
 import { MusicBackend } from '../backend/backend'
@@ -27,7 +27,7 @@ export class MusicManager {
     await this.backend.advanceQueueForward(deviceId)
   }
 
-  async getCurrentTrack (deviceId: string): Promise<MusicTrack | null> {
+  async getCurrentTrack (deviceId: string): Promise<MusicTrackWithUrl | null> {
     return await this.backend.getCurrentTrack(deviceId)
   }
 
@@ -37,7 +37,7 @@ export class MusicManager {
 
   async getNextTrack (deviceId: string): Promise<null | {
     recoverCommitToken: string
-    track: MusicTrack,
+    track: MusicTrackWithUrl,
   }> {
     const nextTrack = await this.backend.getNextTrack(deviceId)
     if (nextTrack === null) {

@@ -1,4 +1,4 @@
-import { MusicTrack } from '@v3rt3p/types/music'
+import { MusicTrack, MusicTrackWithUrl } from '@v3rt3p/types/music'
 import z from 'zod'
 
 import { getBlurredUrl } from '../../helpers'
@@ -167,6 +167,12 @@ export const setAudioPlayerSequenceStateDirective = (track: MusicTrack) => ({
               }])))
             }
           },
+          ProviderInfo: {
+            MUSIC_PROVIDER_YANDEX_MUSIC: {
+              ScreenDevicesImageUrl: 'https://quasar.v3rt3p/logo.png',
+              TvImageUrl: 'https://quasar.v3rt3p/logo.png'
+            }
+          },
           ProviderTrackMeta: {
             MUSIC_PROVIDER_YANDEX_MUSIC: {
               TrackMeta: {
@@ -191,13 +197,23 @@ export const setAudioPlayerSequenceStateDirective = (track: MusicTrack) => ({
   }
 })
 
-export const applyPlayerPlaybackQueueDirective = {
+export const applyPlayerPlaybackQueueDirective = (track: MusicTrack) => ({
   quasarDirective: {
     Name: 'apply_player_playback_queue_directive',
     PayloadRaw: proto.NAlice.TMusicPlatformQueueCapability.TApplyMusicPlatformQueueDirective.encode({
       MusicPlatformQueue: {
+        CurrentEntityIndex: 0,
         Entities: [{
-          PlaybackEntity: {}
+          MusicProvider: proto.Alice.Music.MusicProvider.MUSIC_PROVIDER_YANDEX_MUSIC,
+          PlaybackEntity: {
+            TrackEntity: {
+              Track: {
+                Id: track.id,
+                Uuid: track.id
+              },
+              Uuid: track.id
+            }
+          }
         }],
         MusicPlatformMetaStorage: {
           ProviderMeta: {
@@ -208,9 +224,9 @@ export const applyPlayerPlaybackQueueDirective = {
     }).finish(),
     Type: 'client_action'
   }
-}
+})
 
-export const audioPlayDirective = (track: MusicTrack, offsetMs?: number, recoverCommitToken?: string) => ({
+export const audioPlayDirective = (track: MusicTrackWithUrl, offsetMs?: number, recoverCommitToken?: string) => ({
   quasarDirective: {
     Name: 'audio_play',
     Payload: encodeProtobufStruct({

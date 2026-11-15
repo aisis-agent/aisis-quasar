@@ -3,7 +3,7 @@ import { Sema } from 'async-sema'
 import { randomUUID } from 'node:crypto'
 import { RawData, WebSocket } from 'ws'
 
-import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
+import { AudioMetadataBackend, MusicBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
 import { getLogger } from '../../logger'
 import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
@@ -34,6 +34,7 @@ enum CloseDialogReason {
 
 export interface UniProxyConnectionParameters {
   audioMetadata: AudioMetadataBackend
+  music: MusicBackend
   musicManager: MusicManager
   processor: ProcessorBackend
   storage: StationInfoProvider
@@ -160,7 +161,7 @@ export class UniProxyConnection {
             const track = await this.parameters.musicManager.getCurrentTrack(this.deviceId)
             if (track) {
               rawDirectives.push(
-                applyPlayerPlaybackQueueDirective.quasarDirective,
+                applyPlayerPlaybackQueueDirective(track).quasarDirective,
                 setAudioPlayerSequenceStateDirective(track).quasarDirective,
                 audioPlayDirective(track).quasarDirective,
                 stackRecoverNextTrackDirective.quasarDirective
@@ -175,7 +176,7 @@ export class UniProxyConnection {
                   this.parameters.musicManager.getLastSavedPosition(this.deviceId)
               const position = lastSavedPosition?.trackId === track.id ? lastSavedPosition.position : undefined
               rawDirectives.push(
-                applyPlayerPlaybackQueueDirective.quasarDirective,
+                applyPlayerPlaybackQueueDirective(track).quasarDirective,
                 setAudioPlayerSequenceStateDirective(track).quasarDirective,
                 audioPlayDirective(track, position).quasarDirective,
                 stackRecoverNextTrackDirective.quasarDirective
@@ -188,7 +189,7 @@ export class UniProxyConnection {
             const track = await this.parameters.musicManager.getCurrentTrack(this.deviceId)
             if (track) {
               rawDirectives.push(
-                applyPlayerPlaybackQueueDirective.quasarDirective,
+                applyPlayerPlaybackQueueDirective(track).quasarDirective,
                 setAudioPlayerSequenceStateDirective(track).quasarDirective,
                 audioPlayDirective(track).quasarDirective,
                 stackRecoverNextTrackDirective.quasarDirective
@@ -205,7 +206,7 @@ export class UniProxyConnection {
             const recover = await this.parameters.musicManager.getNextTrack(this.deviceId)
             if (recover) {
               rawDirectives.push(
-                applyPlayerPlaybackQueueDirective.quasarDirective,
+                applyPlayerPlaybackQueueDirective(recover.track).quasarDirective,
                 setAudioPlayerSequenceStateDirective(recover.track).quasarDirective,
                 audioPlayDirective(recover.track, 0, recover.recoverCommitToken).quasarDirective,
                 stackRecoverNextTrackDirective.quasarDirective
@@ -680,6 +681,11 @@ export class UniProxyConnection {
                     metadata
                   }
                 } else if (data.Command?.MusicPlay) {
+                  if (data.Command.MusicPlay.ContentId?.Id) {
+                    const id = data.Command.MusicPlay.ContentId.Id
+                    const startFromItemId = data.Command.MusicPlay.StartFromTrackId
+                    await this.parameters.music.createQueue(this.deviceId, id, startFromItemId ?? undefined, false)
+                  }
                   textInput = {
                     data: {
                       kind: 'playButtonPressPlay'

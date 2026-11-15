@@ -1,5 +1,19 @@
+import type {
+  MusicServiceGetAlbumInfoResponse,
+  MusicServiceGetAlbumTracksResponse,
+  MusicServiceGetArtistAlbumsResponse,
+  MusicServiceGetArtistInfoResponse,
+  MusicServiceGetArtistTracksResponse,
+  MusicServiceGetPlaylistInfoResponse,
+  MusicServiceGetPlaylistTracksResponse,
+  MusicServiceGetStockPlaylistsResponse,
+  MusicServiceGetStockWavesResponse,
+  MusicServiceSearchRequest,
+  MusicServiceSearchResponse,
+  MusicTrackWithUrl
+} from '@v3rt3p/types/music'
+
 import { Span } from '@sentry/node'
-import { MusicTrack } from '@v3rt3p/types/music'
 import { ProcessorDirectiveFunctions, ProcessorPartialResponseWebSocketMessage, ProcessorProcessWebSocketMessage } from '@v3rt3p/types/processor'
 import { EventEmitter } from 'node:stream'
 
@@ -53,20 +67,60 @@ export interface TTSResponse {
 
 export abstract class AudioMetadataBackendSession {
   abstract close (): void
-
   abstract finish (): Promise<object>
-
   abstract processChunk (chunk: Buffer): Promise<void>
 }
 
 export abstract class MusicBackend {
   abstract advanceQueueBackward (deviceId: string): Promise<void>
-
   abstract advanceQueueForward (deviceId: string): Promise<void>
+  abstract createQueue (queueId: string, itemId: string,
+    startFromItemId?: string | undefined, doShuffle?: boolean | undefined): Promise<void>
+  abstract getAlbumInfo (
+    albumId: string
+  ): Promise<MusicServiceGetAlbumInfoResponse>
 
-  abstract getCurrentTrack (deviceId: string): Promise<MusicTrack | null>
+  abstract getAlbumTracks (
+    albumId: string,
+    page?: number,
+    perPage?: number
+  ): Promise<MusicServiceGetAlbumTracksResponse>
+  abstract getArtistAlbums (
+    artistId: string,
+    page?: number,
+    perPage?: number
+  ): Promise<MusicServiceGetArtistAlbumsResponse>
 
-  abstract getNextTrack (deviceId: string): Promise<MusicTrack | null>
+  abstract getArtistInfo (
+    artistId: string
+  ): Promise<MusicServiceGetArtistInfoResponse>
+  abstract getArtistTracks (
+    artistId: string,
+    page?: number,
+    perPage?: number
+  ): Promise<MusicServiceGetArtistTracksResponse>
+
+  abstract getCurrentTrack (deviceId: string): Promise<MusicTrackWithUrl | null>
+
+  abstract getNextTrack (deviceId: string): Promise<MusicTrackWithUrl | null>
+
+  abstract getPlaylistInfo (
+    playlistId: string
+  ): Promise<MusicServiceGetPlaylistInfoResponse>
+
+  abstract getPlaylistTracks (
+    playlistId: string,
+    page?: number,
+    perPage?: number
+  ): Promise<MusicServiceGetPlaylistTracksResponse>
+  abstract getStockPlaylists (): Promise<MusicServiceGetStockPlaylistsResponse>
+  abstract getStockPlaylists (): Promise<MusicServiceGetStockPlaylistsResponse>
+  abstract getStockWaves (): Promise<MusicServiceGetStockWavesResponse>
+  abstract getStockWaves (): Promise<MusicServiceGetStockWavesResponse>
+
+  abstract searchMusic (
+    request: MusicServiceSearchRequest
+  ): Promise<MusicServiceSearchResponse>
 }
 
 export abstract class STTBackendSession {
