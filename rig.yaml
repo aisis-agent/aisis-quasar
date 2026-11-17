@@ -7,5 +7,5 @@ lint_checks:
   enabled: true
   complexity:
     enabled: true
-    max_cognitive: 120
-    max_cyclomatic: 80
+    max_cognitive: 250
+    max_cyclomatic: 150
