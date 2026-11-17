@@ -1,7 +1,8 @@
 import { Span, startInactiveSpan } from '@sentry/node'
 
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
-import { matchFastIntent } from '../../backend/ha-intents'
+import { matchFastIntent, speakerLevelOf } from '../../backend/ha-intents'
+import { recordTurn, TurnOrigin } from '../../backend/turn-memory'
 import { getLogger } from '../../logger'
 import { Notifier } from '../../notifier'
 import proto from '../../protos/protos'
@@ -109,6 +110,12 @@ export type VoiceInput = Input & {
 }
 
 const MAX_WAIT = 5000
+// A dialog is «in progress» while the follow-up window opened by our last question may still be open, and
+// while our last spoken answer is (roughly) playing plus this tail. A terminator («хватит», «ничего») inside
+// it ends the dialog; outside it, «стоп» is a media key and stops the music (ha-intents.ts).
+const FOLLOW_UP_WINDOW_MS = 20_000
+const SPEECH_TAIL_MS = 5000
+const SPEECH_MS_PER_CHAR = 70
 
 export class InputHandler {
   private readonly logger = getLogger()
@@ -117,8 +124,24 @@ export class InputHandler {
   private requestSent: boolean = false
   private session: null | ProcessorSession = null
   private span: Span | undefined
+  // The utterance the brain is answering: recorded with its answer so «повтори» can say it again (turn-memory.ts).
+  private brainTurn: null | { heard: string, origin: TurnOrigin } = null
+  private followUpOpenedAt = 0
+  private spokenUntil = 0
 
   constructor (private readonly properties: InputHandlerProperties) {}
+
+  private dialogActive (): boolean {
+    const now = Date.now()
+    return now - this.followUpOpenedAt < FOLLOW_UP_WINDOW_MS || now < this.spokenUntil + SPEECH_TAIL_MS
+  }
+
+  // Called with every response sent to the station: what it will say and whether the mic stays open.
+  private noteResponse (text: null | string, shouldListen: boolean): void {
+    const now = Date.now()
+    this.followUpOpenedAt = shouldListen ? now : 0
+    if (text) this.spokenUntil = now + text.length * SPEECH_MS_PER_CHAR
+  }
 
   closeSession (closePartially?: boolean): void {
     if (this.session) {
@@ -274,17 +297,20 @@ export class InputHandler {
         // The station sends spoken commands as plain text TextInput follow-ups
         // (e.g. «выключи свет» after a silent turn); run them through the same
         // fast-intent layer as voice before giving up on the text.
-        const fastIntent = await matchFastIntent(input.data.text)
+        const fastIntent = await matchFastIntent(input.data.text,
+          { deviceId: input.metadata.internal.deviceId, dialogActive: this.dialogActive(), origin: 'text', speakerLevel: speakerLevelOf(input.metadata.internal.deviceState) })
         if (fastIntent !== null && fastIntent.kind !== 'llm') {
-          this.logger.info(`Fast intent for text '${input.data.text}': ${fastIntent.text ?? '(executed, silent)'}`)
+          const listen = fastIntent.listen === true
+          this.noteResponse(fastIntent.text, listen)
+          this.logger.info(`Fast intent for text '${input.data.text}': ${fastIntent.text ?? '(executed, silent)'} (listen=${listen})`)
           return {
-            dialogFinished: true,
+            dialogFinished: !listen,
             directives: [
               ...fastIntent.quasarDirectives.map(directive => ({ quasarDirective: directive })),
               // Silent executions must not trigger the waiting earcon.
               ...(fastIntent.text !== null ? [ttsPlayPlaceholderDirective()] : [])
             ],
-            shouldListen: false,
+            shouldListen: listen,
             text: fastIntent.text
           }
         }
@@ -322,15 +348,19 @@ export class InputHandler {
   async processVoiceInput (input: VoiceInput, parentSpan?: Span): Promise<InputResult> {
     this.logger.debug(`Received VoiceInput: ${input.text}`)
     // Fast local intents (lights, sockets, AC, speaker volume, state queries)
-    // run before the LLM brain. Commands execute silently (text: null); every
-    // fast turn keeps the dialog listening for a wake-free follow-up. A
-    // clarified ambiguity reroutes the ORIGINAL phrase to the brain.
-    const fastIntent = await matchFastIntent(input.text)
+    // run before the LLM brain. Commands execute silently (text: null) and END the
+    // dialog; only a question (confirm / clarify / «не расслышала», `listen`) keeps
+    // the mic open for the answer. A clarified ambiguity reroutes the ORIGINAL
+    // phrase to the brain.
+    const fastIntent = await matchFastIntent(input.text,
+      { deviceId: input.metadata.internal.deviceId, dialogActive: this.dialogActive(), origin: 'voice', speakerLevel: speakerLevelOf(input.metadata.internal.deviceState) })
     let brainText = input.text
     if (fastIntent !== null && fastIntent.kind === 'reply') {
-      this.logger.info(`Fast intent for '${input.text}': ${fastIntent.text ?? '(silent)'}`)
+      const listen = fastIntent.listen === true
+      this.noteResponse(fastIntent.text, listen)
+      this.logger.info(`Fast intent for '${input.text}': ${fastIntent.text ?? '(silent)'} (listen=${listen})`)
       return {
-        dialogFinished: false,
+        dialogFinished: !listen,
         directives: [
           ...fastIntent.quasarDirectives.map(directive => ({ quasarDirective: directive })),
           // The placeholder is the station's waiting earcon: only send it when
@@ -338,7 +368,7 @@ export class InputHandler {
           // with no sound at all, exactly like stock smart-home commands.
           ...(fastIntent.text !== null ? [ttsPlayPlaceholderDirective()] : [])
         ],
-        shouldListen: true,
+        shouldListen: listen,
         text: fastIntent.text
       }
     }
@@ -358,18 +388,18 @@ export class InputHandler {
       }
     }
 
+    this.brainTurn = { heard: input.text, origin: 'voice' }
     await this.session.process({
       metadata: input.metadata,
       text: brainText
     })
     this.requestSent = true
-    // Voice turns keep the Alice session listening for follow-ups without a new
-    // wake word: ShouldListen=true makes the station keep the mic open and send
-    // the next VoiceInput within the same dialog.
-    return await this.getPartialResponseResult(input.metadata, parentSpan, true)
+    // The dialog stays open (ShouldListen=true) only when the brain's answer asks
+    // something; a plain answer ends it and the next request needs the wake word.
+    return await this.getPartialResponseResult(input.metadata, parentSpan)
   }
 
-  private async getPartialResponseResult (metadata: InputMetadata, parentSpan?: Span, continueListening = false): Promise<InputResult> {
+  private async getPartialResponseResult (metadata: InputMetadata, parentSpan?: Span): Promise<InputResult> {
     if ((!this.session || !this.requestSent) && this.partialResponses.length === 0) {
       return {
         dialogFinished: true,
@@ -413,7 +443,14 @@ export class InputHandler {
       span?.setAttribute('directives', JSON.stringify(partialResponse.directives, undefined, 2))
       span?.end()
       this.logger.debug('Partial response is finished')
-      const shouldListen = partialResponse.shouldListen || continueListening
+      // A spoken answer that ends in a question expects a reply; anything else closes the dialog.
+      const shouldListen = partialResponse.shouldListen || /[?？]["»”')\]\s]*$/.test(partialResponse.text.trim())
+      this.noteResponse(partialResponse.text, shouldListen)
+      if (this.brainTurn !== null && partialResponse.text) {
+        recordTurn({ action: null, asked: shouldListen, at: Date.now(), heard: this.brainTurn.heard, origin: this.brainTurn.origin,
+          spoken: partialResponse.text })
+      }
+      this.brainTurn = null
       if (!shouldListen) {
         this.logger.debug('Partial response is finished, and no more input is required - closing')
         this.closeSession()

@@ -7,6 +7,7 @@ import { STTBackend, STTBackendSession } from '../backend'
 
 interface GigaAMMessage {
   end_of_utt: boolean;
+  rejected?: string;
   text: string;
 }
 
@@ -44,6 +45,7 @@ class GigaAMSTTSession extends STTBackendSession {
         }
         this.chunkTranscribed({
           endOfUtt: response.end_of_utt,
+          rejected: response.rejected,
           text: response.text
         })
       }

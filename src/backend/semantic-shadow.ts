@@ -43,9 +43,11 @@ interface LayaAnswer {
 
 /**
  * Log a shadow classification for a gray-zone or no-match utterance.
- * zone: 'gray' (0.5 <= scoreIntent < 0.9 / ambiguous) | 'nomatch' (score < 0.5, short text).
+ * zone: 'gray' (0.5 <= scoreIntent < 0.9 / ambiguous) | 'nomatch' (score < 0.5, short text) |
+ * 'catalog' (the fuzzy command catalog decided execute/confirm/clarify: compare laya's domain
+ * with the catalog's choice to find templates/thresholds to tune).
  */
-export function shadowClassify (text: string, score: number | null, zone: 'gray' | 'nomatch'): void {
+export function shadowClassify (text: string, score: number | null, zone: 'catalog' | 'gray' | 'nomatch'): void {
   if (MODE === 'off' || !text.trim()) return
   void (async () => {
     const started = Date.now()

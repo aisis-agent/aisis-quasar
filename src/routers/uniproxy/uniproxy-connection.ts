@@ -4,18 +4,22 @@ import { randomUUID } from 'node:crypto'
 import { RawData, WebSocket } from 'ws'
 
 import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
-import { pickFiller } from '../../backend/fillers'
+import { startTurnFiller } from '../../backend/fillers'
+import { receiverMediaPhrase } from '../../backend/music-parse'
+import { REASK_TEXT, shouldReask } from '../../backend/turn-memory'
+import { timezoneOffsetSeconds } from '../../backend/tz-offset'
 import { getLogger } from '../../logger'
 import { MusicManager } from '../../music/manager'
 import { decodeProtobufStruct, getValue } from '../../protobuf'
 import proto from '../../protos/protos'
 import { StationInfoProvider } from '../../storage/types'
 import { getDirectiveFunctionProvider } from '../alice/base-provider'
-import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, setLocationDirective, setTimezoneDirective, stackRecoverNextTrackDirective, WrappedDirective } from '../alice/directives'
+import { audioPlayDirective, DirectiveFunctionProvider, mmSemanticFrame, RawDirective, setLocationDirective, setTimezoneDirective, stackRecoverNextTrackDirective, ttsPlayPlaceholderDirective, WrappedDirective } from '../alice/directives'
 import { continueSessionStage2SemanticFrame, ttsSemanticFrame } from '../alice/typed-payloads'
 import { OggOpusStreamStitcher } from '../../codecs/ogg-stitcher'
  import { AlarmMetadata, InputHandler, InputMetadata, InputResult, TextInput, TimerMetadata } from './input-handler'
 import { splitSentencesForTts } from './sentence-splitter'
+import { SpotterClipRecorder } from './spotter-clips'
  import { VoiceInputHandler } from './voice-input-handler'
 
 type TServerMessage = proto.NAlice.NAliceApi.ITServerMessage
@@ -50,6 +54,11 @@ const spotterToAssistantNameMapping: Record<string, string> = {
   yasmina: 'Ясмина'
 }
 
+// A turn whose class has a `late` filler (math, music search) speaks it only when the
+// answer is still missing after this long; `immediate` fillers (LLM, state) go at once.
+const LATE_FILLER_MS = 1500
+const RECEIVER_PHRASES_ENABLED = process.env.AISIS_RECEIVER_PHRASES !== 'off'
+
 export class UniProxyConnection {
   private dialogId: null | string = null
   private dialogSpan: Span | undefined = undefined
@@ -63,6 +72,13 @@ export class UniProxyConnection {
   private inputHandlerOpenSessionPromise: null | Promise<void> = null
   private inputSpan: Span | undefined = undefined
   private lastOutputAudioStreamId: number = 1024
+  // Epoch ms of the last AliceResponse that asked the station to keep listening
+  // (0 once a follow-up VoiceInput arrived) and of the last TTS stream close.
+  private followUpExpectedAt = 0
+  // The VoiceInput being processed is the answer window of a question the station just asked (ShouldListen).
+  private answeringQuestion = false
+  private reasked = false
+  private lastTtsClosedAt = 0
   private readonly logger = getLogger<UniProxyConnection>()
   private readonly sendLock = new Sema(1)
 
@@ -75,11 +91,14 @@ export class UniProxyConnection {
   private voiceInputReferenceSequenceNumber: number = -1
 
   private voiceInputStreamId: Long | number = -1
+  private readonly otherStreams = new Map<number, { frames: number, bytes: number }>()
+  private readonly spotterClips: SpotterClipRecorder
 
   constructor (private readonly webSocket: WebSocket,
     private readonly deviceId: string,
     private readonly platform: string,
     private readonly parameters: UniProxyConnectionParameters) {
+    this.spotterClips = new SpotterClipRecorder(deviceId)
     this.voiceInputHandler = new VoiceInputHandler(parameters)
     this.directiveFunctionProvider = getDirectiveFunctionProvider(platform)
     this.inputHandler = new InputHandler({
@@ -209,7 +228,8 @@ export class UniProxyConnection {
             const timezone = deviceInfo.quasarConfig.timezone
 
             rawDirectives.push(setTimezoneDirective(timezone.name,
-              timezone.offsetSeconds, directive.internalDirective.isPayloadRaw).quasarDirective)
+              timezoneOffsetSeconds(timezone.name, timezone.offsetSeconds),
+              directive.internalDirective.isPayloadRaw).quasarDirective)
             break
           }
         }
@@ -259,12 +279,33 @@ export class UniProxyConnection {
     }
   }
 
+  // Binary frames of any stream other than the voice input (e.g. spotter-log audio
+  // that follows LogSpotter) are not decoded; the first frame of each is described
+  // so the log shows what the station really sends besides the single uplink.
+  private noteOtherStream (streamId: number, audioData: Buffer): void {
+    if (this.otherStreams.size > 64) this.otherStreams.clear()
+    const key = Number(streamId)
+    this.spotterClips.addAudio(key, audioData)
+    const seen = this.otherStreams.get(key) ?? { frames: 0, bytes: 0 }
+    seen.frames += 1
+    seen.bytes += audioData.length
+    this.otherStreams.set(key, seen)
+    if (seen.frames > 1) return
+    const head = audioData.indexOf('OpusHead')
+    const opus = head >= 0 && audioData.length >= head + 19
+      ? ` OpusHead channels=${audioData[head + 9]} inputRate=${audioData.readUInt32LE(head + 12)} gainQ8=${audioData.readInt16LE(head + 16)}`
+      : ''
+    this.logger.info(`Non-voice stream ${key}: first frame ${audioData.length}B magic=${JSON.stringify(audioData.subarray(0, 4).toString('latin1'))}${opus}`)
+  }
+
   private async handleAudioMessage (streamId: number, audioData: Buffer): Promise<void> {
-    if (longEquals(streamId, this.voiceInputStreamId)) {
-      await this.voiceInputHandler.handleVoiceInputAudioEvent({
-        buffer: audioData
-      })
+    if (!longEquals(streamId, this.voiceInputStreamId)) {
+      this.noteOtherStream(streamId, audioData)
+      return
     }
+    await this.voiceInputHandler.handleVoiceInputAudioEvent({
+      buffer: audioData
+    })
   }
 
   private async handleBinaryMessage (message: Buffer): Promise<void> {
@@ -317,12 +358,25 @@ export class UniProxyConnection {
   }
 
   private async handleClose (): Promise<void> {
+    if (this.followUpExpectedAt !== 0) {
+      this.logger.warn(`WebSocket closed ${Date.now() - this.followUpExpectedAt}ms after a ShouldListen response ` +
+        `(${Date.now() - this.lastTtsClosedAt}ms after the last TTS stream closed) without a follow-up VoiceInput`)
+    }
     this.inputHandler.closeSession()
     this.closeDialog(CloseDialogReason.WEBSOCKET_CLOSE)
     this.voiceInputHandler.close()
+    this.spotterClips.flush()
   }
 
   private async handleLogSpotterEvent (clientMessage: TClientMessage): Promise<void> {
+    // LogSpotter is the station's own spotter-audio log; the format/source and any
+    // binary stream announced with it say which mic channels (vqe_0, vqe_bnr) arrive.
+    const spotter = clientMessage.Event!.LogSpotter!
+    this.logger.info(`LogSpotter: format=${spotter.Format ?? ''} source=${spotter.Source ?? ''} ` +
+      `rawData=${spotter.IsServiceRawData ?? false} streamId=${String(clientMessage.Event!.Header?.StreamId ?? '-')} ` +
+      `duration=${spotter.Extra?.Payload?.DurationMs ?? '-'}ms transcript=${JSON.stringify(spotter.Transcript ?? '')}`)
+    this.spotterClips.announce(Number(String(clientMessage.Event!.Header?.StreamId ?? -1)),
+      { source: spotter.Source ?? '', transcript: spotter.Transcript ?? '' })
     await this.sendServerMessage({
       Event: {
         Header: {
@@ -664,12 +718,20 @@ export class UniProxyConnection {
       })
     }
 
+    const sinceResponse = this.followUpExpectedAt === 0 ? 'no follow-up pending' :
+      `${Date.now() - this.followUpExpectedAt}ms after ShouldListen response, ${Date.now() - this.lastTtsClosedAt}ms after the last TTS stream closed`
+    this.answeringQuestion = this.followUpExpectedAt !== 0
+    this.followUpExpectedAt = 0
+    this.logger.info(`VoiceInput stream opened (${sinceResponse})`)
     this.voiceInputStreamId = eventHeader.StreamId!
     this.voiceInputReferenceMessageId = eventHeader.MessageId!
     this.voiceInputReferenceRequestId = voiceInputHeader.RequestId!
     this.voiceInputReferenceSequenceNumber = voiceInputHeader.SequenceNumber!
+    // No await before the handler starts: frames and the closing StreamControl
+    // arrive right behind this event (a follow-up flushes its pre-buffered audio
+    // immediately) and were dropped while the device state was being parsed.
     this.voiceInputHandler.handleVoiceInputEvent({
-      metadata: await this.parseQuasarMetadata(
+      metadata: this.parseQuasarMetadata(
         proto.NAlice.NAliceApi.TDeviceState.decode(
           clientMessage.Event!.VoiceInput!.Request!.DeviceStateRaw!),
         proto.NAlice.NAliceApi.TEnvironmentState.decode(
@@ -694,6 +756,7 @@ export class UniProxyConnection {
     })
 
     this.logger.info(`Dialog ${this.dialogId} started`)
+    this.reasked = false
   }
 
   private openSession (): void {
@@ -756,6 +819,7 @@ export class UniProxyConnection {
     return {
       internal: {
         alarms,
+        deviceId: this.deviceId,
         deviceState,
         environmentState,
         info: deviceInfo,
@@ -785,6 +849,8 @@ export class UniProxyConnection {
   private async sendAliceResponse (text: null | string, directives: RawDirective[],
     shouldListen: boolean, requestId: string,
     referenceMessageId: string, sequenceNumber: number) {
+    this.followUpExpectedAt = shouldListen ? Date.now() : 0
+    this.logger.info(`AliceResponse sent: shouldListen=${shouldListen} text=${text === null ? 'none' : `${text.length} chars`}`)
     await this.sendServerMessage({
       Event: {
         AliceResponse: {
@@ -996,7 +1062,9 @@ export class UniProxyConnection {
       }
 
       span?.end()
-      this.logger.info(`Synthesized (streamed): ${sentences.length} sentences, ${totalBytes} bytes, total ${Date.now() - startedAt}ms`)
+      this.lastTtsClosedAt = Date.now()
+      this.logger.info(`Synthesized (streamed): ${sentences.length} sentences, ${totalBytes} bytes, total ${Date.now() - startedAt}ms ` +
+        `(audio about ${Math.round(totalBytes / 8000)}s at 64 kbit/s)`)
     }
   }
 
@@ -1074,8 +1142,33 @@ export class UniProxyConnection {
     this.voiceInputHandler.on('finish', async event => {
       this.voiceInputStreamId = -1
 
+      if (event.rejected) {
+        if (shouldReask(event.rejected, this.answeringQuestion, this.reasked)) {
+          this.reasked = true
+          this.logger.info(`Voice input unclear in a follow-up window (${event.rejected}): asking again once`)
+          await this.sendInputResult({ dialogFinished: false, directives: [ttsPlayPlaceholderDirective()], shouldListen: true, text: REASK_TEXT },
+            event.metadata, this.voiceInputReferenceRequestId, this.voiceInputReferenceMessageId, this.voiceInputReferenceSequenceNumber)
+          return
+        }
+        // Foreign voice/TV per the STT gateway: no brain call, no TTS, end the dialog like a server cancel.
+        this.logger.info(`Voice input dropped: ${event.rejected}`)
+        this.handleServerCancel()
+        return
+      }
+
+      if (event.text.trim() === '') {
+        // Nobody spoke (an unanswered follow-up window) or the recognizer heard
+        // no speech. Stock Alice stays silent and the old «Не расслышал. Повтори»
+        // promised a listen the station never opened (dead mic for minutes).
+        this.logger.info('Voice input was empty: closing the turn silently')
+        this.handleServerCancel()
+        return
+      }
+
       try {
-        await this.sendAsrResult(event.text, true)
+        // A spoken media key is reported to the station as the stock sentence the AirPlay receiver
+        // understands, so it can pause/resume a phone's stream itself (the dialog still uses event.text).
+        await this.sendAsrResult(RECEIVER_PHRASES_ENABLED ? receiverMediaPhrase(event.text) ?? event.text : event.text, true)
       } catch (error) {
         this.logger.warn('Failed to send AsrResult on VoiceHandler finish: ', error)
         this.closeConnection()
@@ -1083,18 +1176,11 @@ export class UniProxyConnection {
       }
 
       let inputResult: InputResult
+      // Slow turn predicted (LLM brain, registry refresh, music search): the fitting
+      // pre-recorded filler is decided and sent concurrently with the answer, never ahead of it.
+      const turnFiller = startTurnFiller(event.text,
+        async filler => { await this.sendTTS(filler.audio, this.voiceInputReferenceMessageId) }, LATE_FILLER_MS)
       try {
-        // Slow turn predicted (LLM brain / registry refresh): speak a short
-        // pre-recorded filler IMMEDIATELY so the owner is not met with silence.
-        const filler = pickFiller(event.text)
-        if (filler !== null) {
-          try {
-            await this.sendTTS(filler.audio, this.voiceInputReferenceMessageId)
-            this.logger.info(`Filler '${filler.text}' (${filler.audio.length}b) sent`)
-          } catch (error) {
-            this.logger.warn('Failed to send filler TTS: ', error)
-          }
-        }
         await this.inputHandlerOpenSessionPromise
         inputResult = await this.inputHandler.processVoiceInput({
           metadata: { ...event.metadata, stationId: this.deviceId },
@@ -1104,6 +1190,9 @@ export class UniProxyConnection {
         this.logger.warn('Failed to processVoiceInput on InputHandler: ', error)
         this.handleServerCancel()
         return
+      } finally {
+        // Answer ready (or failed): drop an undecided filler, wait for one already on the wire.
+        await turnFiller.settle()
       }
 
       try {

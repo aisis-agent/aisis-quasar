@@ -34,6 +34,7 @@ export type STTChunkTranscribeCallback = (result: STTChunkTranscribeResult) => v
 
 export interface STTChunkTranscribeResult {
   endOfUtt: boolean;
+  rejected?: string;
   text: string;
 }
 

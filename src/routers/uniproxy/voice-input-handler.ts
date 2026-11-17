@@ -15,7 +15,10 @@ export interface VoiceInputCancelEvent {
 }
 
 export interface VoiceInputEvent {
-  metadata: InputMetadata
+  // A promise so the handler can start taking audio before the (async) device
+  // metadata is parsed: frames and the end-of-stream close that arrive in that
+  // window used to be dropped.
+  metadata: InputMetadata | Promise<InputMetadata>
   parentSpan?: Span
 }
 
@@ -35,6 +38,7 @@ export interface VoiceInputHandlerEvents {
 
 export interface VoiceInputHandlerFinishEvent {
   metadata: InputMetadata
+  rejected?: string
   text: string
 }
 
@@ -63,6 +67,9 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
   private audioMetadataSession: AudioMetadataBackendSession | null = null
   private audioSendingLock = new Sema(1)
   private lastTranscribeResult: string = ''
+  private lastRejected: string | undefined
+  private frames = 0
+  private startedAt = 0
   private readonly logger = getLogger<VoiceInputHandler>()
   private metadata: InputMetadata = { internal: {}, readyToUse: {} }
   private sttSession: null | STTBackendSession = null
@@ -90,7 +97,9 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
     this.sttSession = null
     this.audioDataQueue = []
     this.lastTranscribeResult = ''
+    this.lastRejected = undefined
     this.metadata = { internal: {}, readyToUse: {} }
+    this.frames = 0
 
     this.voiceSpan?.setAttribute('endReason', 'close')
     this.voiceSpan?.end()
@@ -99,6 +108,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
 
   async handleVoiceInputAudioEvent (data: VoiceInputAudioEvent): Promise<void> {
     if (!this.active || this.finishing) return
+    this.frames += 1
     const epoch = this.epoch
     await this.audioSendingLock.acquire()
     try {
@@ -123,6 +133,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
   async handleVoiceInputEvent (request: VoiceInputEvent): Promise<void> {
     this.close()
     this.active = true
+    this.startedAt = Date.now()
     const epoch = this.epoch
     this.starting = this.start(request, epoch)
     await this.starting
@@ -137,17 +148,15 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
       })
     }
 
-    this.metadata = {
-      ...request.metadata
-    }
-
     let audioMetadataSession: AudioMetadataBackendSession
     let sttSession: STTBackendSession
+    let requestMetadata: InputMetadata
 
     try {
-      [audioMetadataSession, sttSession] = await Promise.all([
+      [audioMetadataSession, sttSession, requestMetadata] = await Promise.all([
         this.properties.audioMetadata.startCapturing(this.voiceSpan ?? undefined),
-        this.properties.stt.startTranscribing(this.voiceSpan ?? undefined)
+        this.properties.stt.startTranscribing(this.voiceSpan ?? undefined),
+        request.metadata
       ])
     } catch (error) {
       if (epoch === this.epoch && this.active) {
@@ -161,12 +170,20 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
       sttSession.close()
       return
     }
+    // Speaker metadata (MatchedUser) may already have landed while the device
+    // state was parsing; it wins over the request's baseline.
+    this.metadata = {
+      internal: { ...requestMetadata.internal, ...this.metadata.internal },
+      readyToUse: { ...requestMetadata.readyToUse, ...this.metadata.readyToUse }
+    }
 
-    sttSession.setCallback(({ endOfUtt, text }) => {
+    sttSession.setCallback(({ endOfUtt, rejected, text }) => {
       if (epoch !== this.epoch || !this.active || this.sttSession !== sttSession) return
       this.lastTranscribeResult = text
+      this.lastRejected = rejected
       this.emit('transcribed', { text })
       if (endOfUtt && text.trim() !== "") this.logger.info(`Heard: ${text}`)
+      if (endOfUtt && rejected) this.logger.info(`Speech ignored by STT gateway: ${rejected}`)
       if (endOfUtt) void this.finalize(epoch)
     })
 
@@ -259,7 +276,9 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
         this.voiceSpan?.setAttribute('metadata', JSON.stringify(metadata, undefined, 2))
         this.voiceSpan?.end()
         this.voiceSpan = null
-        this.emit('finish', { metadata, text: this.lastTranscribeResult })
+        this.logger.info(`Voice stream finished: frames=${this.frames} elapsed=${Date.now() - this.startedAt}ms ` +
+          `text=${this.lastTranscribeResult.trim().length} chars`)
+        this.emit('finish', { metadata, rejected: this.lastRejected, text: this.lastTranscribeResult })
       } finally {
         this.audioSendingLock.release()
       }

@@ -1,363 +1,466 @@
-{"text": "вруби кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "перемотай вперёд", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "предыдущий трек", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "сколько будет 1+1", "expect": {"kind": "math", "domain": "math"}}
-{"text": "поставь температуру 22", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "выключи проектор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "доброе утро", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "вруби телек", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "включи будильник на 7", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "какие устройства работают", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "чему равно 10 делить на 4", "expect": {"kind": "math", "domain": "math"}}
-{"text": "эй стой", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "потише", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "будет ли снег завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включен ли телевизор", "expect": {"kind": "query", "domain": "state"}}
-{"text": "будет ли дождь", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "расскажи новость", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "сделай таймер на 15 минут", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "позвони в полицию", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "включи чайник пожалуйста", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "который час", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "сколько будет тридцать плюс одиннадцать", "expect": {"kind": "math", "domain": "math"}}
-{"text": "сколько сейчас времени", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "выключи телевизор в гостиной", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "выключи люстюру", "expect": {"kind": "clarify", "domain": "typo"}}
-{"text": "как приготовить борщ", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "поставь два таймера", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "какие лампочки горят", "expect": {"kind": "query", "domain": "state"}}
-{"text": "разбуди меня в 6:30", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи все лампочки", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "колыбельную пожалуйста", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "скажи состояние телевизора", "expect": {"kind": "query", "domain": "state"}}
-{"text": "заведи будильник на 5", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "погромче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "запусти стиральную машину", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "включи лампочку на кухне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "свет кухню включи", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "когда закат", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "стоп", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "поставь таймер на пять минут", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи кондиционер в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "выключи люстру", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "расскажи о себе", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "что в моём календаре", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "скажи погоду", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "выключи лампу в студии", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какой свет горит на кухне", "expect": {"kind": "query", "domain": "state"}}
-{"text": "немного громче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "включи увлажнитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "выключи свет во всех комнатах", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какая погода завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "сделай громкость 30", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "сколько будет десять минус три", "expect": {"kind": "math", "domain": "math"}}
-{"text": "посчитай 15 умножить на 4", "expect": {"kind": "math", "domain": "math"}}
-{"text": "хм ладно", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "зажги свет в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи сплит в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "включи кондиционер на втором этаже", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "стоп таймер", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "чему равно 9*9", "expect": {"kind": "math", "domain": "math"}}
-{"text": "убавь температуру", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "вычисли девяносто делить на девять", "expect": {"kind": "math", "domain": "math"}}
-{"text": "отключи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "выключи чайник на кухне", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "включи мою любимую музыку", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "сколько будет двадцать разделить на четыре", "expect": {"kind": "math", "domain": "math"}}
-{"text": "громкость на полную", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "что сейчас включено", "expect": {"kind": "query", "domain": "state"}}
-{"text": "зажги свет по всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "сколько километров до луны", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "вырубите свет в коридоре", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "громкость на максимум", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "покажи громкость", "expect": {"kind": "query", "domain": "volume"}}
-{"text": "тише", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "кто такой Пушкин", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "какой свет горит", "expect": {"kind": "query", "domain": "state"}}
-{"text": "чему равняется 81 делить на 9", "expect": {"kind": "math", "domain": "math"}}
-{"text": "кто ты", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "напомни принять лекарство", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "вычисли 2+2*10", "expect": {"kind": "math", "domain": "math"}}
-{"text": "поставь 20 градусов", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "напомни мне позвонить маме в 18:00", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи субтитры", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "сколько осталось на таймере", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "как добраться до аэропорта", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "поставь что-нибудь спокойное", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "включи белый шум", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "как дела", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "отменить таймер", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "потуши свет в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "горит ли свет в спальне", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "когда наступит весна", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "убавь громкость в гостиной", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "позвони жене", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "какая песня играет", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "работает ли чайник", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи свет в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "чуть тише", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "посчитай 3+3*2", "expect": {"kind": "math", "domain": "math"}}
-{"text": "кто президент франции", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "курс доллара", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "пауза", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "включи музыку в гостиной", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "что работает сейчас", "expect": {"kind": "query", "domain": "state"}}
-{"text": "а иначе", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "сколько будет два плюс два", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи ютуб", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "выключи весь свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "ээээм", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "громкость на пять", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "что включено наверху", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи люстру", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "громкость на минимум", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "сколько будет 10-4", "expect": {"kind": "math", "domain": "math"}}
-{"text": "выключи свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи джаз", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "прочитай сообщения", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "позвони по видеосвязи", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "состояние глобуса", "expect": {"kind": "query", "domain": "state"}}
-{"text": "включи свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "выключи телек", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "отключи будильник", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи чайник на кухне", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "помоги мне", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "какая погода сегодня", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "включи ночнек в спальне", "expect": {"kind": "clarify", "domain": "typo"}}
-{"text": "сделай громкость восемь", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "включи лампу в студии", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "свет в спальне выключи", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "громче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "добрый вечер", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "выключи розетку чайника", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "пока", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "подожди подожди", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "сколько будет 100/5", "expect": {"kind": "math", "domain": "math"}}
-{"text": "вычисли 17 плюс 25", "expect": {"kind": "math", "domain": "math"}}
-{"text": "дальше", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "отключи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "громкость чуть прибавь", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "включи робот-пылесос", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "сделай прохладнее", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "включи свет в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "переведи слово кошка на английский", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "сколько времени", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "вруби глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
-{"text": "врубите свет в коридоре", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "выключи свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "выключи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "покажи что горит", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "есть ли новые сообщения", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "спасибо", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "выключи свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "увеличь температуру на кондиционере", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "скажи сколько времени", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включи удлинитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "расскажи анекдот", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "включи весь свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "прибавь громкость", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "громкость поменьше", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "сделай как вчера", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "сколько будет шесть умножить на семь", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи проектор наверху", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "выключи удлинитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "кто победил в последнем матче", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "посчитай 8 плюс 8 минус 4", "expect": {"kind": "math", "domain": "math"}}
-{"text": "свет на кухню", "expect": {"kind": "llm", "domain": "light"}}
-{"text": "какой сегодня день недели", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "останови музыку", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "сколько будет 50 на 50", "expect": {"kind": "math", "domain": "math"}}
-{"text": "другой вариант", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "включи люстру в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "запусти посудомойку", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "минимальная громкость", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "сколько будет 7*8", "expect": {"kind": "math", "domain": "math"}}
-{"text": "чему равно 56 минус 6", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи свет везде", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "столица Австралии", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "выключай свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "громкость на три", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "выключи ночник в спальне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи ночник в спальне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "что горит", "expect": {"kind": "query", "domain": "state"}}
-{"text": "посчитай сорок пять минус пятнадцать", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи свет наверху", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "вруби чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "выключи сплит наверху", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "включи телек", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "добавь в список покупок молоко", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "продиктуй номер", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "включи кондиционер пожалуйста", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "скажи что включено", "expect": {"kind": "query", "domain": "state"}}
-{"text": "напомни купить хлеб", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "прогноз погоды на неделю", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "кто написал войну и мир", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "выключи люстру", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "поставь будильник на 8 часов", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи проектор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "поставь музыку", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "в гостиной погаси свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какое состояние чайника", "expect": {"kind": "query", "domain": "state"}}
-{"text": "поставь будильник на 7 утра", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "скажи какой свет горит", "expect": {"kind": "query", "domain": "state"}}
-{"text": "выключи кондей", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "включи радио", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "выключи лампочку", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "поставь громкость на два", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "погаси гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "сколько будет 2 умножить на 2", "expect": {"kind": "math", "domain": "math"}}
-{"text": "громкость на десять", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "потуши чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "включи люстgu", "expect": {"kind": "clarify", "domain": "typo"}}
-{"text": "какой сейчас год", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "включи свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "кондиционер 23", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:23"}}
+{"text": "предыдущий трек", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "выключи проектор", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "громкость семь", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:7"}}
+{"text": "посчитай 12+12", "expect": {"kind": "math", "domain": "math"}}
 {"text": "сколько стоит биткоин", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "кто победил в последнем матче", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "погода на выходные", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "позвони в полицию", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "вычисли 17 плюс 25", "expect": {"kind": "math", "domain": "math"}}
+{"text": "назови столицу японии", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "отключи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "громкость 10 и яркость 50", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "вклчи люстру", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "confirm", "action": "on:light.liustra", "question": "Включить люстру?"}}
+{"text": "поставь температуру 22", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:22"}}
 {"text": "включи музыку", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "закрой шторы", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "яркость пятьдесят", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:50"}}
 {"text": "включи кондей", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "включи классическую музыку", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "ответь на звонок", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "покажи состояние дома", "expect": {"kind": "query", "domain": "state"}}
-{"text": "вычисли 100 минус 1", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "сколько будет 5*5", "expect": {"kind": "math", "domain": "math"}}
-{"text": "прочитай сказку", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "какая погода", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "сколько градусов дома", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "выключи светильник", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "сколько будет 1000-250", "expect": {"kind": "math", "domain": "math"}}
-{"text": "во сколько рассвет", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включить свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "что играет", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "какой свет включен", "expect": {"kind": "query", "domain": "state"}}
-{"text": "отключи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "следующий трек", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "как зовут твоего создателя", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "какое сегодня число", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "выключи ночник в спальне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "колыбельную пожалуйста", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "звук пять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:5"}}
+{"text": "кромкость десять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
 {"text": "выруби проектор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "что такое квантовая физика", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "позвони маме", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "включён ли чайник", "expect": {"kind": "query", "domain": "state"}}
-{"text": "перематывай назад", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "погаси гирленду", "expect": {"kind": "clarify", "domain": "typo"}}
-{"text": "продолжай", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "а попроще", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "горит ли ночник", "expect": {"kind": "query", "domain": "state"}}
-{"text": "включи свет всюду", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "а что если", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "напомни о встрече завтра", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи тёплый пол", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "расскажи шутку", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "включи гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи рок", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "включи кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "отправь сообщение мужу", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "ну не знаю", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "таймер на одну минуту", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "напомни через час выключить чайник", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "включи музыку погромче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "громкость 20", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "открой окно", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "спокойной ночи", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "выключи кондиционер в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "какая температура на улице", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "поставь таймер на 10 минут", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "играет ли музыка", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "следующая серия", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "поставь фильм", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "сделай громче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "выключи свет во всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какая громкость сейчас", "expect": {"kind": "query", "domain": "volume"}}
-{"text": "установи таймер на 30 минут", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "что включено в квартире", "expect": {"kind": "query", "domain": "state"}}
-{"text": "включи глобус пожалуйста", "expect": {"kind": "clarify", "domain": "ambiguous"}}
-{"text": "добавь громкость", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "включи светильник в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сто", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
 {"text": "сколько будет 2+2", "expect": {"kind": "math", "domain": "math"}}
-{"text": "нет не то", "expect": {"kind": "llm", "domain": "edge"}}
-{"text": "скажи какая громкость", "expect": {"kind": "query", "domain": "volume"}}
-{"text": "что в мире происходит", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "какая температура завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "почему небо голубое", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "состояние глобуса", "expect": {"kind": "query", "domain": "state"}}
 {"text": "выключи вытяжку", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "поставь на паузу", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "какая температура на кондиционере", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "погаси свет во всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "сколько громкость", "expect": {"kind": "query", "domain": "volume"}}
-{"text": "сделай тише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "напомни мне позвонить маме в 18:00", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "значительно тише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "двадцать пять", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "какой сейчас год", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "скажи состояние телевизора", "expect": {"kind": "query", "domain": "state"}}
+{"text": "двадцать пять градусов", "expect": {"kind": "clarify", "domain": "setpoint", "tier": "confirm", "action": "setpoint:25", "question": "Поставить кондиционер на 25 градусов?"}}
+{"text": "выключи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "что включено в квартире", "expect": {"kind": "query", "domain": "state"}}
+{"text": "погаси гирленду", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "включи проектор", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "сделай громкость восемь", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "свет кухню включи", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "есть ли новые сообщения", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "громкость поменьше", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "зажги свет по всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "вычисли 2+2", "expect": {"kind": "math", "domain": "math"}}
-{"text": "чему равно двести умножить на три", "expect": {"kind": "math", "domain": "math"}}
-{"text": "сделай теплее", "expect": {"kind": "llm", "domain": "climate"}}
-{"text": "сколько будет 7 на 7", "expect": {"kind": "math", "domain": "math"}}
-{"text": "сколько градусов на улице", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "включи гирлянбу", "expect": {"kind": "clarify", "domain": "typo"}}
-{"text": "что ты умеешь", "expect": {"kind": "llm", "domain": "smalltalk"}}
-{"text": "включи свет попроще", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
-{"text": "переведи доброе утро на немецкий", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "включить свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "будет ли дождь", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "повтори будильник", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "чему равно 9*9", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включи свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "выключи свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "выключи люстюру", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "включен ли телевизор", "expect": {"kind": "query", "domain": "state"}}
+{"text": "что включено наверху", "expect": {"kind": "query", "domain": "state"}}
+{"text": "погаси гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "какой свет горит", "expect": {"kind": "query", "domain": "state"}}
+{"text": "запусти посудомойку", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "почему небо голубое", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "поставь 20 градусов", "expect": {"kind": "clarify", "domain": "setpoint", "tier": "confirm", "action": "setpoint:20", "question": "Поставить кондиционер на 20 градусов?"}}
+{"text": "отключи будильник", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "поставь будильник на 8 часов", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "громкость 7,", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:7"}}
+{"text": "чему равно 10 делить на 4", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сколько будет пять умножить на шесть", "expect": {"kind": "math", "domain": "math"}}
+{"text": "Громкость 10.", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "что играет", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "сколько будет 2 умножить на 2", "expect": {"kind": "math", "domain": "math"}}
+{"text": "громкость в моей жизни", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "потуши свет в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "включи свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "зажги глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "яркий свет в конце тоннеля", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "какая сейчас громкость", "expect": {"kind": "query", "domain": "volume"}}
+{"text": "сделай звук восемь", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:8"}}
+{"text": "включи сплит в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "кто написал войну и мир", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "включи лампочку на кухне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "выключи сплит наверху", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "тише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "включи все лампочки", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "поставь два таймера", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи телек", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "поставь таймер на 10 минут", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "какой свет горит на кухне", "expect": {"kind": "query", "domain": "state"}}
+{"text": "чуть тише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "какой свет включён", "expect": {"kind": "query", "domain": "state"}}
+{"text": "поставь будильник на 7 утра", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "сколько времени", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "включи телевизор в гостиной", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "громкость десять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "посчитай 144 делить на 12", "expect": {"kind": "math", "domain": "math"}}
+{"text": "как зовут твоего создателя", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "следующий трек", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "расскажи про яркость солнца", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "включи робот-пылесос", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "который час", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "заведи будильник на 5", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "поставь звук на 4", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:4"}}
+{"text": "сколько громкость", "expect": {"kind": "query", "domain": "volume"}}
+{"text": "громкось 10", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "включи белый шум", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "выключи весь свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "доброе утро", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "пока", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "скажи какой свет горит", "expect": {"kind": "query", "domain": "state"}}
+{"text": "останови музыку", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "кто такой Пушкин", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "сколько будет шесть умножить на семь", "expect": {"kind": "math", "domain": "math"}}
+{"text": "выключи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "сколько будет 10-4", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включён ли чайник", "expect": {"kind": "query", "domain": "state"}}
+{"text": "выключи кондиционер в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "громкость", "expect": {"kind": "clarify", "domain": "volume_partial", "tier": "clarify", "question": "Какую громкость поставить?"}}
+{"text": "громкость на пять", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "поставь музыку", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "кондиционер наверху 25", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:25"}}
+{"text": "выключи телевизор в гостиной", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "сколько будет 1+1", "expect": {"kind": "math", "domain": "math"}}
 {"text": "горит ли свет на кухне", "expect": {"kind": "query", "domain": "state"}}
+{"text": "какой сегодня день недели", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "выключи свет во всех комнатах", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сколько километров до луны", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "какая температура на кондиционере", "expect": {"kind": "llm", "domain": "climate"}}
+{"text": "включи увлажнитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "в гостиной погаси свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "будет ли снег завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "громкость 500", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "22 градуса", "expect": {"kind": "clarify", "domain": "setpoint", "tier": "confirm", "action": "setpoint:22", "question": "Поставить кондиционер на 22 градуса?"}}
+{"text": "следущий трек", "expect": {"kind": "clarify", "domain": "media_partial", "tier": "confirm", "action": "brain:следующий трек", "question": "Включить следующий трек?"}}
+{"text": "потуши чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "покажи что горит", "expect": {"kind": "query", "domain": "state"}}
+{"text": "Кромкость 10.  Смотри, вот.", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "когда закат", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "зажги свет в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "вычисли девяносто делить на девять", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включи весь свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "таймер на одну минуту", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "чему равняется 81 делить на 9", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сколько будет тридцать плюс одиннадцать", "expect": {"kind": "math", "domain": "math"}}
+{"text": "какое сегодня число", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "вкл кондиционер", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "confirm", "action": "on:climate.kondei_1", "question": "Включить кондиционер?"}}
+{"text": "включи ночник в спальне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "убавь громкость в гостиной", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "включи рок", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "вруби глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "перематывай назад", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "громкасть дясять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "отправь сообщение мужу", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "посчитай 60*60", "expect": {"kind": "math", "domain": "math"}}
+{"text": "что работает сейчас", "expect": {"kind": "query", "domain": "state"}}
+{"text": "проектор наверху", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "clarify", "question": "Включить или выключить проектор?"}}
+{"text": "сколько будет двадцать разделить на четыре", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сколько будет 0.5+0.5", "expect": {"kind": "math", "domain": "math"}}
+{"text": "предыдуший трек", "expect": {"kind": "clarify", "domain": "media_partial", "tier": "confirm", "action": "brain:предыдущий трек", "question": "Включить предыдущий трек?"}}
+{"text": "включи свет наверху", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "выключи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "выключи кондей", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "спасибо", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "включи свет всюду", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "спокойной ночи", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "громкость сделай десять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "дальше", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "ну не знаю", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "яркость на кухне 30", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:30"}}
+{"text": "включи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "включи проектор наверху", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "кондей 24", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:24"}}
+{"text": "вруби телек", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "температура", "expect": {"kind": "clarify", "domain": "setpoint", "tier": "clarify", "question": "Какую температуру поставить?"}}
+{"text": "70 кроцентов", "expect": {"kind": "reprompt", "domain": "no_enumeration", "tier": "reprompt"}}
+{"text": "стоп", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "сколько градусов дома", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "хм ладно", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "скажи сколько времени", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "что в моём календаре", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи люстру в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сделай как вчера", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "50 яркость", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:50"}}
+{"text": "свет на кухню", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "clarify", "question": "Включить или выключить свет на кухне?"}}
+{"text": "вылючи телевизор", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "clarify", "question": "Включить или выключить телевизор?"}}
+{"text": "яркость", "expect": {"kind": "clarify", "domain": "brightness", "tier": "clarify", "question": "Какую яркость поставить?"}}
+{"text": "Спасибо за просмотр", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
+{"text": "сделай таймер на 15 минут", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "продолжение следует", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
 {"text": "убавь громкость", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "вырубите свет в коридоре", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сплит 21", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:21"}}
+{"text": "минимальная громкость", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "какая температура завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "выключи телевезор", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "разбуди меня завтра в 9", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи ютуб", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "50 процэктои", "expect": {"kind": "reprompt", "domain": "no_enumeration", "tier": "reprompt"}}
+{"text": "закрой шторы", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "напомни о встрече завтра", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "люстра", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "clarify", "question": "Включить или выключить люстру?"}}
+{"text": "температура двадцать", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:20"}}
+{"text": "выключи лампочку", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "какая песня играет", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "разбуди меня в 6:30", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "потише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "следующая серия", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "выключи лампу в студии", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "кто мне звонил", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "сколько будет два плюс два", "expect": {"kind": "math", "domain": "math"}}
+{"text": "дальши", "expect": {"kind": "clarify", "domain": "media_partial", "tier": "confirm", "action": "brain:следующий трек", "question": "Включить следующий трек?"}}
+{"text": "температура 50", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "громкасть восемь смотри", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:8"}}
+{"text": "кондей", "expect": {"kind": "clarify", "domain": "setpoint", "tier": "clarify", "question": "Включить или выключить кондиционер?"}}
+{"text": "сделай громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "продолжай", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "выключи телек", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "предыдщий трек", "expect": {"kind": "clarify", "domain": "media_partial", "tier": "confirm", "action": "brain:предыдущий трек", "question": "Включить предыдущий трек?"}}
+{"text": "сколько будет десять минус три", "expect": {"kind": "math", "domain": "math"}}
+{"text": "перемотай вперёд", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "включи ночнек в спальне", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "свет в спальне выключи", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сделай тише", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "сколько осталось на таймере", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "какая погода", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "поставь таймер на пять минут", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи электрический чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "громкость на три", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "включен ли свет в гостиной", "expect": {"kind": "query", "domain": "state"}}
+{"text": "горит ли свет в спальне", "expect": {"kind": "query", "domain": "state"}}
+{"text": "какая погода сегодня", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "прочитай сообщения", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "включи удлинитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "громкость 7", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:7"}}
+{"text": "расскажи новость", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "сделай громкость 30", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "сколько будет сто плюс двести", "expect": {"kind": "math", "domain": "math"}}
+{"text": "яркость 100", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:100"}}
+{"text": "вруби чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "включи музыку погромче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "включи радио", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "включи субтитры", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "включи будильник на 7", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "включи свет в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "когда открыли америку", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "выключай свет в спальне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "расскажи анекдот", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "двадцать градусов в фаренгейтах", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "включи глобус наверху", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "переключи канал на десять", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "врубите свет в коридоре", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "нет не то", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "добрый вечер", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "звука 6", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:6"}}
+{"text": "кондей 40", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "какие лампочки горят", "expect": {"kind": "query", "domain": "state"}}
+{"text": "что такое квантовая физика", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "освещение 30 процентов", "expect": {"kind": "clarify", "domain": "brightness", "tier": "confirm", "action": "brightness:30", "question": "Сделать яркость 30 процентов?"}}
+{"text": "убавь температуру", "expect": {"kind": "llm", "domain": "climate"}}
+{"text": "как дела", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "громкость на полную", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "эй стой", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "выключи розетку чайника", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "какая температура на улице", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "какая погода завтра", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "переведи слово кошка на английский", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "включи китайник", "expect": {"kind": "llm", "domain": "typo"}}
+{"text": "какие устройства работают", "expect": {"kind": "query", "domain": "state"}}
+{"text": "погромче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "Смотри, вот.", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "что ты умеешь", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "ээээм", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "увеличь температуру на кондиционере", "expect": {"kind": "llm", "domain": "climate"}}
+{"text": "во сколько рассвет", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "выключи чайник на кухне", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "включи чайник пожалуйста", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "температура 22", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:22"}}
+{"text": "включи классическую музыку", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "выключи люстру", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "поставь яркость 20", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:20"}}
+{"text": "громкость 20", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "выключи светильник", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "громкость 50", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "горит ли ночник", "expect": {"kind": "query", "domain": "state"}}
+{"text": "включи глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "как добраться до аэропорта", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "выключи свет в гостиной", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "включи джаз", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "сколько будет 7*8", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включи свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "что по телевизору", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "набери номер", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "сделай теплее", "expect": {"kind": "llm", "domain": "climate"}}
+{"text": "чему равно 6*7", "expect": {"kind": "math", "domain": "math"}}
+{"text": "температура двадцать два с половиной", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:22.5"}}
+{"text": "почему такая громкость у соседей", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "кондиционер на 25", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:25"}}
+{"text": "какое состояние чайника", "expect": {"kind": "query", "domain": "state"}}
+{"text": "включи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "поставь что-нибудь спокойное", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "отключи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "включи музыку в гостиной", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "другой вариант", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "выключи свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "10 громкость", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "выруби кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "напомни принять лекарство", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "температура 22,5", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:22.5"}}
+{"text": "Субтитры сделал DimaTorzok", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
+{"text": "50 процентов", "expect": {"kind": "clarify", "domain": "volume_partial", "tier": "clarify", "question": "Громкость или яркость?"}}
+{"text": "гормкость три", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:3"}}
+{"text": "24 кондей", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:24"}}
+{"text": "включи чайник на кухне", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "выключи свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "продиктуй номер", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "громкость чуть прибавь", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "поставь на паузу", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "сколько сейчас времени", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "кто ты", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "посчитай 8 плюс 8 минус 4", "expect": {"kind": "math", "domain": "math"}}
+{"text": "вычисли 2+2*10", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включи свет везде", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сколько шагов в километре", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "70 процентов", "expect": {"kind": "clarify", "domain": "volume_partial", "tier": "clarify", "question": "Громкость или яркость?"}}
+{"text": "яркость света", "expect": {"kind": "clarify", "domain": "brightness", "tier": "clarify", "question": "Какую яркость поставить?"}}
+{"text": "отключи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "включи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "включи лампу в студии", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "включи гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "играет ли музыка", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "пауза", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "выключи кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "громкость дисять", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "температура 22 градуса", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:22"}}
+{"text": "стоп таймер", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "расскажи интересный факт", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "добавь в список покупок молоко", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "какая самая высокая гора", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "какая громкость сейчас", "expect": {"kind": "query", "domain": "volume"}}
+{"text": "позвони жене", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "температура на улице", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "поставь громкость на два", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "70 прыцентов", "expect": {"kind": "reprompt", "domain": "no_enumeration", "tier": "reprompt"}}
+{"text": "свет 50", "expect": {"kind": "clarify", "domain": "brightness", "tier": "confirm", "action": "brightness:50", "question": "Сделать яркость 50 процентов?"}}
+{"text": "включи кондиционер на втором этаже", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "скажи погоду", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "выключи проектar", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "установи таймер на 30 минут", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "поставь плейлист для сна", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "а что если", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "громкоть 8", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:8"}}
+{"text": "открой окно", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "как приготовить борщ", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "намного громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "выключи свет во всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "что включено", "expect": {"kind": "query", "domain": "state"}}
+{"text": "отменить таймер", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "покажи состояние дома", "expect": {"kind": "query", "domain": "state"}}
+{"text": "включи пятый канал", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "громкость на максимум", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "включи светильник в прихожей", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сколько будет 100/5", "expect": {"kind": "math", "domain": "math"}}
+{"text": "открой шторы", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "десять", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "ответь на звонок", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "включи камин", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "12+12 продолжение", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
+{"text": "какой свет включен", "expect": {"kind": "query", "domain": "state"}}
+{"text": "яркость 50", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:50"}}
+{"text": "когда наступит весна", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "кромкасть 5", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:5"}}
+{"text": "Продолжение следует...", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
+{"text": "поставь фильм", "expect": {"kind": "llm", "domain": "media_control"}}
+{"text": "включи телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
+{"text": "5 звук", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:5"}}
+{"text": "прочитай сказку", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "погаси свет во всей квартире", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "а попроще", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "запусти стиральную машину", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "три четыре", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "покажи громкость", "expect": {"kind": "query", "domain": "volume"}}
+{"text": "включи глобус в гостиной", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "чуть громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "сколько будет 1000-250", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сколько будет 5*5", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сделай прохладнее", "expect": {"kind": "llm", "domain": "climate"}}
+{"text": "чему равно двести умножить на три", "expect": {"kind": "math", "domain": "math"}}
+{"text": "включи гирлянбу", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "какая температура в комнате", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "звук", "expect": {"kind": "clarify", "domain": "volume_partial", "tier": "clarify", "question": "Какую громкость поставить?"}}
+{"text": "выкл люстру", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "confirm", "action": "off:light.liustra", "question": "Выключить люстру?"}}
+{"text": "включи свет попроще", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "яркость 0", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "темпиратура 24", "expect": {"kind": "cmd", "domain": "setpoint", "tier": "execute", "action": "setpoint:24"}}
+{"text": "работает ли чайник", "expect": {"kind": "query", "domain": "state"}}
+{"text": "максимальная громкость", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "подожди подожди", "expect": {"kind": "llm", "domain": "edge"}}
 {"text": "потуши ночник", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "выключи всё освещение", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи телевизор в гостиной", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "когда открыли америку", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "посчитай 60*60", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включен ли свет в гостиной", "expect": {"kind": "query", "domain": "state"}}
-{"text": "напиши смс", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "включи люстру", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "посчитай 12+12", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи электрический чайник", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "что по телевизору", "expect": {"kind": "llm", "domain": "media_control"}}
-{"text": "какая температура в комнате", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "зажги ночник", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какая сейчас громкость", "expect": {"kind": "query", "domain": "volume"}}
-{"text": "назови столицу японии", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "посчитай 144 делить на 12", "expect": {"kind": "math", "domain": "math"}}
-{"text": "сколько будет 0.5+0.5", "expect": {"kind": "math", "domain": "math"}}
-{"text": "на кухне включи свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "чему равно 6*7", "expect": {"kind": "math", "domain": "math"}}
-{"text": "зажги глобус", "expect": {"kind": "clarify", "domain": "ambiguous"}}
-{"text": "включи камин", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "сколько будет пять умножить на шесть", "expect": {"kind": "math", "domain": "math"}}
-{"text": "чуть громче", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "отключи кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "включи китайник", "expect": {"kind": "llm", "domain": "typo"}}
-{"text": "сколько будет сто плюс двести", "expect": {"kind": "math", "domain": "math"}}
-{"text": "включи глобус наверху", "expect": {"kind": "clarify", "domain": "ambiguous"}}
-{"text": "выруби кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "выключить свет", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "какой свет включён", "expect": {"kind": "query", "domain": "state"}}
-{"text": "расскажи интересный факт", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "погода на выходные", "expect": {"kind": "llm", "domain": "weather_time"}}
-{"text": "значительно тише", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "разбуди меня завтра в 9", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "открой шторы", "expect": {"kind": "llm", "domain": "unknown_device"}}
-{"text": "выключи проектar", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "громкость 10", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
 {"text": "потуши телевизор", "expect": {"kind": "cmd", "domain": "media_device"}}
-{"text": "кто мне звонил", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "что в мире происходит", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "посчитай сорок пять минус пятнадцать", "expect": {"kind": "math", "domain": "math"}}
+{"text": "пока", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "помоги мне", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "скажи что включено", "expect": {"kind": "query", "domain": "state"}}
+{"text": "позвони по видеосвязи", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "включи люстру", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "вычисли 100 минус 1", "expect": {"kind": "math", "domain": "math"}}
+{"text": "отключи чайник", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "позвони маме", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "прогноз погоды на неделю", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "гром кость 10", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "зажги ночник", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "скажи какая громкость", "expect": {"kind": "query", "domain": "volume"}}
+{"text": "расскажи шутку", "expect": {"kind": "llm", "domain": "smalltalk"}}
+{"text": "чему равно 56 минус 6", "expect": {"kind": "math", "domain": "math"}}
+{"text": "сколько будет 7 на 7", "expect": {"kind": "math", "domain": "math"}}
+{"text": "на кухне включи свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "сколько будет 50 на 50", "expect": {"kind": "math", "domain": "math"}}
+{"text": "мне 30 градусов жарко", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "Алиса, включи.", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "посчитай 15 умножить на 4", "expect": {"kind": "math", "domain": "math"}}
+{"text": "яркасть 40", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:40"}}
+{"text": "немного громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "вруби кондиционер", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "телевизор", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "clarify", "question": "Включить или выключить телевизор?"}}
+{"text": "посчитай 3+3*2", "expect": {"kind": "math", "domain": "math"}}
+{"text": "поставь звук камина", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "включи тёплый пол", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "включи кондиционер пожалуйста", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "включи свет 50", "expect": {"kind": "clarify", "domain": "brightness", "tier": "confirm", "action": "brightness:50", "question": "Сделать яркость 50 процентов?"}}
+{"text": "яркость 80 процентов", "expect": {"kind": "cmd", "domain": "brightness", "tier": "execute", "action": "brightness:80"}}
+{"text": "выключить свет", "expect": {"kind": "cmd", "domain": "light"}}
+{"text": "включи кондицонер", "expect": {"kind": "clarify", "domain": "switch_partial", "tier": "confirm", "action": "on:climate.kondei_1", "question": "Включить кондиционер?"}}
+{"text": "что горит", "expect": {"kind": "query", "domain": "state"}}
+{"text": "курс доллара", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "сколько градусов на улице", "expect": {"kind": "llm", "domain": "weather_time"}}
+{"text": "прибавь громкость", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "напомни купить хлеб", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "отключи будильник", "expect": {"kind": "llm", "domain": "partial_negative", "tier": "llm"}}
+{"text": "выключи удлинитель", "expect": {"kind": "llm", "domain": "unknown_device"}}
+{"text": "а иначе", "expect": {"kind": "llm", "domain": "edge"}}
+{"text": "звук 5", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:5"}}
+{"text": "громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "столица Австралии", "expect": {"kind": "llm", "domain": "question"}}
 {"text": "выключи освещение в студии", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "сколько шагов в километре", "expect": {"kind": "llm", "domain": "question"}}
-{"text": "поставь плейлист для сна", "expect": {"kind": "llm", "domain": "music"}}
-{"text": "максимальная громкость", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "намного громче", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "переведи доброе утро на немецкий", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "включи мою любимую музыку", "expect": {"kind": "llm", "domain": "music"}}
+{"text": "громкость на минимум", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "сильно потише", "expect": {"kind": "cmd", "domain": "volume"}}
 {"text": "выключи гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "выключи свет на втором этаже", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "включай свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "повтори будильник", "expect": {"kind": "llm", "domain": "timer"}}
-{"text": "какая самая высокая гора", "expect": {"kind": "llm", "domain": "question"}}
+{"text": "напомни через час выключить чайник", "expect": {"kind": "llm", "domain": "timer"}}
+{"text": "кто президент франции", "expect": {"kind": "llm", "domain": "question"}}
 {"text": "зажги гирлянду", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "набери номер", "expect": {"kind": "llm", "domain": "comms"}}
-{"text": "включи глобус в гостиной", "expect": {"kind": "clarify", "domain": "ambiguous"}}
+{"text": "напиши смс", "expect": {"kind": "llm", "domain": "comms"}}
+{"text": "включи следует", "expect": {"kind": "llm", "domain": "no_enumeration", "tier": "llm"}}
+{"text": "включи глобус пожалуйста", "expect": {"kind": "clarify", "domain": "ambiguous"}}
 {"text": "включи-ка свет на кухне", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "выключи кондиционер наверху", "expect": {"kind": "cmd", "domain": "climate"}}
-{"text": "сильно потише", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "громкость 50", "expect": {"kind": "cmd", "domain": "volume"}}
-{"text": "что включено", "expect": {"kind": "query", "domain": "state"}}
+{"text": "громкость 10 пожалуйста", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
+{"text": "включи кондиционер в гостиной", "expect": {"kind": "cmd", "domain": "climate"}}
+{"text": "добавь громкость", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "громкость на десять", "expect": {"kind": "cmd", "domain": "volume"}}
+{"text": "что сейчас включено", "expect": {"kind": "query", "domain": "state"}}
+{"text": "Алиса, громкость 10.", "expect": {"kind": "cmd", "domain": "volume_partial", "tier": "execute", "action": "volume:10"}}
 {"text": "включи освещение в студии", "expect": {"kind": "cmd", "domain": "light"}}
-{"text": "включи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
-{"text": "выключи телевезор", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "выключи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
+{"text": "включи люстgu", "expect": {"kind": "clarify", "domain": "typo"}}

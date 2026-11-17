@@ -1,26 +1,52 @@
-// Scored fast-intent layer: candidate interpretations are scored per utterance
-// (exact 1.0 / stem 0.95-prefix / fuzzy 0.8 / mismatch 0) and dispatched:
-//   score >= 0.9        -> execute silently (state re-verified, errors spoken)
-//   0.5 <= score < 0.9  -> clarifying question (ShouldListen follow-up)
-//   score < 0.5         -> fall through to the LLM brain
-// State queries («что включено», «какой свет включен») NEVER execute. Instant
-// local math («сколько будет 2+2») answers without the brain. Ambiguity choices
-// persist in /src/ha.ambiguity.json. Config: AISIS_HA_URL/AISIS_HA_TOKEN env or
-// /src/ha.config.json; no config -> layer disabled.
+// Fast-intent layer in three tiers, in front of the LLM brain:
+//
+//  1. EXACT   scoreIntent(): verb + noun grammar over the home's entities
+//             (exact 1.0 / stem 0.95 / typo 0.8). score >= 0.9 -> execute,
+//             0.5..0.9 or ambiguous -> «Ты про …?» (legacy gray zone).
+//  2. CATALOG intent-catalog.ts: underspecified or noisy phrases («громкость 10»
+//             through ASR damage, «кондей 24», «свет на кухню») are fuzzy-scored
+//             against a command catalog generated from the entity map and the
+//             control actions -> execute / confirm / clarify (decideFastIntent).
+//  3. LLM     nothing close -> the brain.
+//
+// Executed device/volume commands play the stock-Alice IoT earcon instead of
+// speech (text null + local_audio_file_play); questions and errors are spoken.
+// State queries («что включено») NEVER execute. Instant local math answers without
+// the brain. Confirmations persist in /src/ha.ambiguity.json (a phrase the owner
+// confirmed once is executed directly next time). Config: AISIS_HA_URL/
+// AISIS_HA_TOKEN env or /src/ha.config.json; no config -> layer disabled.
 
+import { AsyncLocalStorage } from 'node:async_hooks'
+import { executeTvAppIntent, parseTvAppIntent, executeFireplaceIntent, parseFireplaceIntent } from './tv-app-intents'
 import { readFileSync, writeFileSync } from 'node:fs'
 
 import { getLogger } from '../logger'
 import { encodeProtobufStruct } from '../protobuf'
 import proto from '../protos/protos'
+import { allowCorrection, confirmationQuestion, describeCorrection, eligible, endsMidPhrase, noteAsked, requestCorrection, shadowOnly } from './asr-correct'
+import { parseEndDialog } from './end-dialog'
+import { matchEntityQuery } from './entity-index'
+import { composeNumeral, editDistance, NUMBER_WORDS, normalize, parseNumbers, splitSentences, tokenize } from './fuzzy-ru'
+import { grammarRoute } from './grammar-hook'
+import { decideCatalog, DeviceIntent, isNarrativeVerbForm, LIGHT_WORDS, OFF_VERBS, ON_VERBS, parseUtterance, Resolved, Room, Utterance, VolumeIntent, World } from './intent-catalog'
+import { tryMediaControl, tryMusicIntent } from './music-intents'
+import { type MediaAction, parseMediaControl } from './music-parse'
 import { shadowClassify } from './semantic-shadow'
+import { DEFAULT_VOLUME_STEP_PCT, doneText, failureText, findSetting, getSettings, getValue, matchSettingQuery, postValue, queryAnswer, refreshSettings, volumeLevels, volumeStepPct } from './settings-voice'
+import { speakerArea } from './speaker-room'
+import { ActionRecord, latestAction, latestTurn, parseRepeat, recordTurn, RepeatTarget, Turn, TurnOrigin } from './turn-memory'
 
 export type FastIntentResult =
   | { kind: 'llm', text: string } // route this (rewritten) text to the LLM brain
-  | { kind: 'reply', quasarDirectives: proto.NAlice.NAliceApi.ITDirective[], text: null | string } // null text = silent
+  // `listen`: the turn asks the owner something (confirm/clarify/«не расслышала») and the
+  // station must keep the mic open for the answer. Executed commands, state answers and
+  // plain replies leave it unset: the dialog ends, no wake-free continuation.
+  | { kind: 'reply', listen?: boolean, quasarDirectives: proto.NAlice.NAliceApi.ITDirective[], text: null | string } // null text = silent
 
 interface HaEntity {
-  attributes: { friendly_name?: string, volume_level?: number }
+  attributes: { brightness?: number, friendly_name?: string, max_temp?: number, min_temp?: number, temperature?: number } & Record<string, unknown>
+  last_changed?: string
+  last_updated?: string
   entity_id: string
   state: string
 }
@@ -35,25 +61,48 @@ interface HaRegistry {
 }
 
 // Thrown when a service call was accepted into the ha-cli queue because HA is
-// restarting; measured cold starts (odroid HA logs, 2026-10-27..11-06):
-// 78-119s, median ~90s.
-class HaRestartingError extends Error {}
-
-const HA_RECOVERY_TEXT =
-  'Умный дом перезагружается, обычно примерно через девяносто секунд всё придёт в норму.'
-
-interface DeviceIntent {
-  kind: 'on' | 'off'
-  label: string
-  targets: string[] // entity ids; empty when wholeDomain is set
-  wholeDomain?: 'light'
+// restarting. etaSeconds is ha-cli's measured typical recovery time (X-Aisis-Eta:
+// median of real HA down->up windows), undefined if the header is missing.
+class HaRestartingError extends Error {
+  constructor (message: string, readonly etaSeconds: number | undefined) {
+    super(message)
+  }
 }
 
-interface PendingClarification {
-  device: DeviceIntent
-  expiresAt: number
-  mode: 'confirm' | 'home-or-music'
+function restartingError (response: Response): HaRestartingError {
+  const eta = Number(response.headers.get('x-aisis-eta'))
+  return new HaRestartingError('ha-cli queued the call', Number.isFinite(eta) && eta > 0 ? eta : undefined)
+}
+
+function secondsWord (n: number): string {
+  if (n % 10 === 1 && n % 100 !== 11) return 'секунду'
+  if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) return 'секунды'
+  return 'секунд'
+}
+
+export function haRecoveryText (etaSeconds: number | undefined): string {
+  if (etaSeconds === undefined) return 'Умный дом перезагружается, скоро всё придёт в норму.'
+  return `Умный дом перезагружается, обычно примерно через ${etaSeconds} ${secondsWord(etaSeconds)} всё придёт в норму.`
+}
+
+// What the current matchFastIntent call has executed and which phrase it answers: filled by executeResolved,
+// read by the outermost matchFastIntent when it records the turn (turn-memory.ts). Per call, not module state,
+// because a text turn from the dashboard or an agent can overlap a voice turn.
+interface TurnTrace {
+  executed: ActionRecord | null
   phrase: string
+  skipRecording: boolean
+}
+const turnTrace = new AsyncLocalStorage<TurnTrace>()
+
+interface PendingClarification {
+  declineToBrain: boolean // «нет» to a legacy «Ты про …?» reroutes the phrase to the brain; catalog questions just cancel
+  expiresAt: number
+  remember?: false // «да» to a repeat question must not teach the phrase «повтори» as a home command
+  mode: 'confirm' | 'fill' | 'home-or-music'
+  phrase: string
+  resolved?: Resolved // confirm / home-or-music: what «да» executes
+  fill?: (answer: Utterance) => null | Resolved // fill: the follow-up completes the command
 }
 
 // Pure scoring output — exported for the intent test harness.
@@ -68,9 +117,13 @@ export interface ScoredIntent {
 
 const logger = getLogger()
 
+// The dashboard's settings registry (voice control of every setting): fetched in the background from the start,
+// so the first spoken setting is not lost to a cold cache. Never blocks a turn; empty until it loads.
+void refreshSettings()
+
 // ── Vocabulary ────────────────────────────────────────────────────────────────
 
-const ROOMS: { area: string, declined: string, keywords: string[] }[] = [
+const ROOMS: Room[] = [
   { area: 'Гостиная', declined: 'в гостиной', keywords: ['гостин'] },
   { area: 'Кухня', declined: 'на кухне', keywords: ['кухн'] },
   { area: 'Спальня', declined: 'в спальне', keywords: ['спальн'] },
@@ -79,15 +132,12 @@ const ROOMS: { area: string, declined: string, keywords: string[] }[] = [
   { area: 'Второй этаж', declined: 'наверху', keywords: ['второй этаж', 'втором этаж', 'наверх'] }
 ]
 
+// A phrase without a room means the room of the speaker that heard it (speaker-room.ts); this is only the answer
+// for a station Home Assistant does not place in a known room (and for the corpus runner, which has no station).
 const DEFAULT_AREA = 'Гостиная'
 const ROOM_DEFAULT_SCORE = 0.95
 const FUZZY_ENTITY_SCORE = 0.8
 
-const ON_VERBS = ['включи', 'включить', 'включай', 'зажги', 'зажечь', 'вруби', 'врубить']
-const OFF_VERBS = ['выключи', 'выключить', 'выключай', 'отключи', 'отключить',
-  'выруби', 'вырубить', 'потуши', 'погаси', 'погасить']
-
-const LIGHT_WORDS = ['свет', 'освещени', 'лампочк', 'ламп', 'ночник', 'светильник']
 const LIGHT_STEM = 'свет'
 
 // Explicit entity catalog: stems cover Russian word forms (света/глобуса/...).
@@ -118,27 +168,14 @@ const STATE_REPORT: { entity: string, label: string }[] = [
   { entity: 'media_player.gostinaia', label: 'музыка в гостиной' }
 ]
 
-const STATION_MEDIA_PLAYER = 'media_player.mini_gostinaia'
-
 // Overridable so tests can point it at a scratch file.
 const AMBIGUITY_FILE = process.env.AISIS_HA_AMBIGUITY_FILE ?? '/src/ha.ambiguity.json'
-const AMBIGUITY_TTL_MS = 30_000
+const AMBIGUITY_TTL_MS = 90_000
 
 const EXECUTE_THRESHOLD = 0.9
 const CLARIFY_THRESHOLD = 0.5
 
-// ── Russian numerals and math ────────────────────────────────────────────────
-
-const NUMBER_WORDS: Record<string, number> = {
-  ноль: 0, один: 1, одну: 1, два: 2, две: 2, три: 3, четыре: 4, пять: 5,
-  шесть: 6, семь: 7, восемь: 8, девять: 9, десять: 10, одиннадцать: 11,
-  двенадцать: 12, тринадцать: 13, четырнадцать: 14, пятнадцать: 15,
-  шестнадцать: 16, семнадцать: 17, восемнадцать: 18, девятнадцать: 19,
-  двадцать: 20, тридцать: 30, сорок: 40, пятьдесят: 50, шестьдесят: 60,
-  семьдесят: 70, восемьдесят: 80, девяносто: 90, сто: 100, двести: 200,
-  триста: 300, четыреста: 400, пятьсот: 500, шестьсот: 600, семьсот: 700,
-  восемьсот: 800, девятьсот: 900, тысяча: 1000, тысячи: 1000, тысяч: 1000
-}
+// ── Math ─────────────────────────────────────────────────────────────────────
 
 // Longest-first so «умножить на» wins over «умножить».
 const WORD_OPS: { re: RegExp, symbol: string }[] = [
@@ -153,60 +190,11 @@ const WORD_OPS: { re: RegExp, symbol: string }[] = [
 // Turns «сколько будет …» / «посчитай …» into a bare arithmetic expression.
 const MATH_QUESTION_RE = /^(сколько будет|скольким будет|сколько это|посчитай|чему равно|чему равняется|вычисли)\s+/
 
-interface VolumeIntent {
-  kind: 'query' | 'set'
-  relative?: number
-  target?: number
-}
-
-function levenshtein (a: string, b: string): number {
-  const previous = Array.from({ length: b.length + 1 }, (_, index) => index)
-  for (let i = 1; i <= a.length; i++) {
-    let swap = previous[0]
-    previous[0] = i
-    for (let j = 1; j <= b.length; j++) {
-      const temp = previous[j]
-      previous[j] = Math.min(
-        previous[j] + 1,
-        previous[j - 1] + 1,
-        swap + (a[i - 1] === b[j - 1] ? 0 : 1))
-      swap = temp
-    }
-  }
-  return previous[b.length]
-}
-
-// 1.0 exact/stem-prefix, 0.8 close typo (Levenshtein <= 2), else 0.
+// 1.0 exact/stem-prefix, 0.8 close typo (edit distance <= 2), else 0.
 function tokenSimilarity (token: string, stem: string): number {
   if (token === stem || token.startsWith(stem) || stem.startsWith(token) && token.length >= 4) return 1
-  if (token.length >= 5 && stem.length >= 5 && levenshtein(token, stem) <= 2) return FUZZY_ENTITY_SCORE
+  if (token.length >= 5 && stem.length >= 5 && editDistance(token, stem) <= 2) return FUZZY_ENTITY_SCORE
   return 0
-}
-
-function normalize (text: string): string {
-  return text.toLowerCase()
-    .replaceAll('ё', 'е')
-    .replace(/[^a-zа-я0-9\s+\-*/.,×÷]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-}
-
-// Composes a Russian numeral run («двести пятьдесят четыре») into one number.
-function composeNumeral (tokens: string[], start: number): { end: number, value: number } {
-  let total = 0
-  let current = 0
-  let index = start
-  while (index < tokens.length && tokens[index] in NUMBER_WORDS) {
-    const value = NUMBER_WORDS[tokens[index]]
-    if (value >= 1000) {
-      total += (current || 1) * value
-      current = 0
-    } else {
-      current += value
-    }
-    index++
-  }
-  return { end: index, value: total + current }
 }
 
 // Tokenize → two-phase precedence (× ÷ before + −) → no eval(), ported from the
@@ -344,6 +332,12 @@ let ambiguityMemory: null | Record<string, 'home' | 'llm'> = null
 const REGISTRY_TTL_MS = 60_000
 const FETCH_TIMEOUT_MS = 3000
 
+const REPROMPT_TEXT = 'Повтори?'
+const REPROMPT_LOOP_MS = 60_000
+// «ничего», «хватит», «спасибо»: the dialog ends, nothing is said, nothing is played.
+const DIALOG_END: FastIntentResult = { kind: 'reply', quasarDirectives: [], text: null }
+let lastRepromptAt = 0
+
 function getConfig (): null | { token: string, url: string } {
   if (process.env.AISIS_HA_URL && process.env.AISIS_HA_TOKEN) {
     return { token: process.env.AISIS_HA_TOKEN, url: process.env.AISIS_HA_URL }
@@ -464,7 +458,7 @@ async function callService (config: { token: string, url: string }, entityId: st
   const response = await haFetch(config, path, body)
   if (response.status === 202) {
     // Accepted into the ha-cli delayed queue: HA is restarting.
-    throw new HaRestartingError('ha-cli queued the call')
+    throw restartingError(response)
   }
   if (!response.ok) {
     throw new Error(`HA ${path} ${entityId} -> ${response.status}`)
@@ -476,7 +470,7 @@ async function callWholeDomain (config: { token: string, url: string },
   // Domain-wide HA calls require entity_id "all".
   const response = await haFetch(config,
     `/api/services/${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`, { entity_id: 'all' })
-  if (response.status === 202) throw new HaRestartingError('ha-cli queued the call')
+  if (response.status === 202) throw restartingError(response)
   if (!response.ok) {
     throw new Error(`HA ${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'} -> ${response.status}`)
   }
@@ -489,9 +483,51 @@ async function currentState (config: { token: string, url: string }, entityId: s
   return (await response.json() as HaEntity).state
 }
 
+async function currentEntity (config: { token: string, url: string }, entityId: string): Promise<HaEntity | undefined> {
+  const response = await haFetch(config, `/api/states/${entityId}`)
+  if (!response.ok || response.headers.get('x-aisis-cache') === 'stale') return undefined
+  return await response.json() as HaEntity
+}
+
+// «яркость 50» / «кондиционер на 24»: absolute set-points, not on/off.
+async function callSetService (config: { token: string, url: string }, entityId: string, device: DeviceIntent): Promise<void> {
+  const domain = entityId.split('.')[0]
+  let path = '/api/services/light/turn_on'
+  let body: Record<string, unknown> = { entity_id: entityId, brightness_pct: device.brightnessPct }
+  if (domain === 'climate') {
+    path = '/api/services/climate/set_temperature'
+    body = { entity_id: entityId, temperature: device.temperature }
+    // A powered-off IR AC ignores a set-point; an explicit mode starts it (as for «включи»).
+    if ((await currentEntity(config, entityId))?.state === 'off') body.hvac_mode = 'cool'
+  }
+  const response = await haFetch(config, path, body)
+  if (response.status === 202) throw restartingError(response)
+  if (!response.ok) throw new Error(`HA ${path} ${entityId} -> ${response.status}`)
+}
+
+function setSatisfied (entity: HaEntity | undefined, device: DeviceIntent): boolean {
+  if (entity === undefined) return false
+  if (entity.entity_id.startsWith('climate.')) {
+    return entity.state !== 'off' && Math.abs((entity.attributes.temperature ?? Number.NaN) - (device.temperature ?? Number.NaN)) < 0.3
+  }
+  const brightness = entity.attributes.brightness
+  return entity.state === 'on' && typeof brightness === 'number' &&
+    Math.abs(brightness / 2.55 - (device.brightnessPct ?? Number.NaN)) <= 6
+}
+
+async function verifySet (config: { token: string, url: string }, device: DeviceIntent): Promise<boolean> {
+  for (let attempt = 0; attempt < 9; attempt++) {
+    const entities = await Promise.all(device.targets.map(entityId => currentEntity(config, entityId)))
+    if (entities.every(entity => setSatisfied(entity, device))) return true
+    await new Promise(resolve => setTimeout(resolve, 300))
+  }
+  return false
+}
+
 // Post-execution verification: Zigbee/IR devices settle for seconds, so poll.
 // Returns true once every target reports the desired state.
 async function verifyExecution (config: { token: string, url: string }, device: DeviceIntent): Promise<boolean> {
+  if (device.kind === 'set') return await verifySet(config, device)
   const desired = device.kind === 'on' ? 'on' : 'off'
   for (let attempt = 0; attempt < 9; attempt++) {
     if (device.wholeDomain) {
@@ -528,10 +564,10 @@ function matchVolume (s: string, tokens: string[]): VolumeIntent | null {
   if (/(какая|сколько|покажи|скажи).{0,12}громкость|громкость сейчас/.test(s)) {
     return { kind: 'query' }
   }
-  if (/максимальн\w*\s+громкость|громкость.{0,12}максимум|громкость на полную/.test(s)) {
+  if (/максимальн[а-я]*\s+громкость|громкость.{0,12}максимум|громкость на полную/.test(s)) {
     return { kind: 'set', target: 1 }
   }
-  if (/минимальн\w*\s+громкость|громкость.{0,12}минимум/.test(s)) {
+  if (/минимальн[а-я]*\s+громкость|громкость.{0,12}минимум/.test(s)) {
     return { kind: 'set', target: 0.1 }
   }
   if (s.includes('громкость')) {
@@ -540,19 +576,25 @@ function matchVolume (s: string, tokens: string[]): VolumeIntent | null {
     const number = digitIndex >= 0
       ? Number(tokens[digitIndex])
       : wordIndex >= 0 ? composeNumeral(tokens, wordIndex).value : null
+    // Two numbers («громкость 10 и яркость 50») or a value outside 1..100 is not a
+    // volume command this layer may guess at: the catalog / brain decide.
+    if (parseNumbers(tokens, false).length > 1 || number !== null && number > 100) return null
     if (number !== null && number > 0) {
       // «громкость на пять» = Alice 0..10 scale, «громкость 50» = percent.
       return { kind: 'set', target: number <= 10 ? number / 10 : number / 100 }
     }
-    // «прибавь/убавь громкость» without a number.
-    return /прибав|добав|повыс/.test(s) ? { kind: 'set', relative: 0.2 } : { kind: 'set', relative: -0.2 }
+    // «прибавь/убавь громкость» without a number. A bare «громкость» (or a typo of it)
+    // is NOT a direction: the catalog asks what to do instead of guessing «тише».
+    if (/прибав|добав|повыс|увелич|подним|больш/.test(s)) return { kind: 'set', steps: 1 }
+    if (/убав|убер|уменьш|пониз|опуст|меньш/.test(s)) return { kind: 'set', steps: -1 }
+    return null
   }
   const louder = /громче/.test(s) // substring: covers «погромче» too
   const quieter = /тише/.test(s) // \b does not work with Cyrillic — plain substring
   if (louder !== quieter) { // exactly one of them
-    const big = /(значительн|сильн|гораздо|намного)/.test(s) ? 0.4 : 0.1
-    const step = /(чуть|немного|слегка)/.test(s) ? 0.1 : big === 0.4 ? 0.4 : 0.2
-    return { kind: 'set', relative: louder ? step : -step }
+    // One step is the configured volume step (speaker.volume_step_pct, 30% = three of ten levels by default): a plain «громче» must be heard, «намного» is two steps.
+    const steps = /(значительн|сильн|гораздо|намного)/.test(s) ? 2 : 1
+    return { kind: 'set', steps: louder ? steps : -steps }
   }
   return null
 }
@@ -567,22 +609,25 @@ function isStateQuery (s: string, tokens: string[]): boolean {
   return hasQueryWord && hasStateWord
 }
 
-function resolveCommand (s: string, tokens: string[], reg: HaRegistry): ScoredIntent | null {
-  const on = tokens.some(token => ON_VERBS.some(verb => token.startsWith(verb)))
-  const off = tokens.some(token => OFF_VERBS.some(verb => token.startsWith(verb)))
+function resolveCommand (s: string, tokens: string[], reg: HaRegistry, defaultArea: string): ScoredIntent | null {
+  const commands = tokens.filter(token => !isNarrativeVerbForm(token))
+  const on = commands.some(token => ON_VERBS.some(verb => token.startsWith(verb)))
+  const off = commands.some(token => OFF_VERBS.some(verb => token.startsWith(verb)))
   if (!on && !off) return null
   const kind: 'on' | 'off' = on ? 'on' : 'off'
 
-  // AC resolves by room: kondei_1 — Гостиная, kondei_2 — Второй этаж.
+  // AC resolves by room: kondei_1 — Гостиная, kondei_2 — Второй этаж. Without a room in the phrase: the AC of the
+  // speaker's own room, else the first one.
   if (/(кондиционер|кондей|конде|сплит)/.test(s)) {
     const usable = ['climate.kondei_1', 'climate.kondei_2'].filter(id => {
       const state = reg.entities.get(id)?.state
       return state !== undefined && state !== 'unavailable' && state !== 'unknown'
     })
     const areas = mentionedRoomAreas(s)
+    const inSpeakerRoom = usable.filter(id => entityArea(reg, id) === defaultArea)
     const targets = areas.length > 0
       ? usable.filter(id => areas.includes(entityArea(reg, id) ?? ''))
-      : usable.slice(0, 1)
+      : inSpeakerRoom.length > 0 ? inSpeakerRoom : usable.slice(0, 1)
     if (targets.length > 0) {
       return { kind: 'command', score: 1, device: { kind, label: 'кондиционер', targets } }
     }
@@ -625,7 +670,7 @@ function resolveCommand (s: string, tokens: string[], reg: HaRegistry): ScoredIn
       return { kind: 'command', score: 1 * entityScore * 1, device: { kind, label, targets, wholeDomain: 'light' } }
     }
     const areas = mentionedRoomAreas(s)
-    const effectiveAreas = areas.length > 0 ? areas : [DEFAULT_AREA]
+    const effectiveAreas = areas.length > 0 ? areas : [defaultArea]
     targets = roomLights(reg, effectiveAreas)
     if (targets.length === 0) return null
     label = lightLabel(effectiveAreas)
@@ -640,9 +685,9 @@ function resolveCommand (s: string, tokens: string[], reg: HaRegistry): ScoredIn
   }
 }
 
-export function scoreIntent (rawText: string, reg: HaRegistry): null | ScoredIntent {
+export function scoreIntent (rawText: string, reg: HaRegistry, defaultArea: string = DEFAULT_AREA): null | ScoredIntent {
   const s = normalize(rawText)
-  const tokens = s.split(' ')
+  const tokens = tokenize(s) // sentence punctuation glued to a word («10.») must not hide the number
   if (s === '') return null
 
   // Reminders/timers with an embedded command («напомни выключить чайник»)
@@ -666,7 +711,7 @@ export function scoreIntent (rawText: string, reg: HaRegistry): null | ScoredInt
     return { kind: 'state_query', score: 1, lightsOnly: /горит|свет/.test(s) }
   }
 
-  return resolveCommand(s, tokens, reg)
+  return resolveCommand(s, tokens, reg, defaultArea)
 }
 
 // ── Replies ──────────────────────────────────────────────────────────────────
@@ -708,21 +753,79 @@ function buildStateReport (reg: HaRegistry, lightsOnly: boolean): string {
   return reg.stale === true ? `По последним данным, ${list[0].toLowerCase()}${list.slice(1)}` : list
 }
 
+// Stock Alice confirms an executed IoT/volume command with a short chime instead
+// of speech (firmware sound AliceIoTSoundsTurnOn/TurnOff via local_audio_file_play,
+// the same directive the brain's play_iot_sound function sends). It is NOT the
+// tts_play_placeholder waiting jingle: that one stays reserved for turns that speak.
+const EARCON_ENABLED = process.env.AISIS_FAST_EARCON !== 'off'
+
+function earconDirectives (sound: 'off' | 'on'): proto.NAlice.NAliceApi.ITDirective[] {
+  if (!EARCON_ENABLED) return []
+  return [{
+    IsLedSilent: true,
+    Name: 'local_audio_file_play',
+    Payload: encodeProtobufStruct({
+      play_times: 1,
+      sound_to_play: sound === 'on' ? 'AliceIoTSoundsTurnOn' : 'AliceIoTSoundsTurnOff'
+    }),
+    Type: 'client_action'
+  }]
+}
+
+// Media keys. The speaker's own AirPlay playback goes through the adapter; when nothing of ours
+// plays, a Home Assistant player that is playing (TV, living-room music) gets the key instead.
+const HA_MEDIA_PLAYERS = ['media_player.televizor', 'media_player.gostinaia']
+const HA_MEDIA_SERVICES: Record<MediaAction, string> = {
+  next: 'media_next_track', pause: 'media_pause', previous: 'media_previous_track', resume: 'media_play', stop: 'media_stop'
+}
+
+async function controlHaMedia (config: { token: string, url: string }, action: MediaAction): Promise<boolean> {
+  const reg = await getRegistry(config, true)
+  const wanted = action === 'resume' ? 'paused' : 'playing'
+  const target = HA_MEDIA_PLAYERS.find(entityId => reg.entities.get(entityId)?.state === wanted)
+  if (target === undefined) return false
+  const response = await haFetch(config, `/api/services/media_player/${HA_MEDIA_SERVICES[action]}`, { entity_id: target })
+  return response.ok
+}
+
+// null: not a media key for anything that is playing; the caller carries on with the phrase.
+// Success is an earcon; stop/pause with nothing playing stays silent (stock firmware answers its
+// own player, and a spoken «поставила на паузу» over nothing is exactly the chatter to avoid). The
+// silent reply keeps the `clear_queue` directive the TextInput «стоп»/«пауза» spotter turn always got.
+async function runMediaControl (config: { token: string, url: string }, action: MediaAction): Promise<FastIntentResult | null> {
+  const silent: FastIntentResult = {
+    kind: 'reply',
+    quasarDirectives: [{ IsLedSilent: true, Name: 'clear_queue', Payload: encodeProtobufStruct({}), Type: 'client_action' }],
+    text: null
+  }
+  const done: FastIntentResult = {
+    kind: 'reply', quasarDirectives: earconDirectives(action === 'stop' || action === 'pause' ? 'off' : 'on'), text: null
+  }
+  const outcome = await tryMediaControl(action)
+  if (outcome === 'done') return done
+  if (outcome === 'unsupported') return { kind: 'reply', quasarDirectives: [], text: 'Это играет с телефона, управляй с него.' }
+  if (outcome === 'failed') return { kind: 'reply', quasarDirectives: [], text: 'Не получилось.' }
+  if (await controlHaMedia(config, action)) return done
+  return action === 'stop' || action === 'pause' ? silent : null
+}
+
 // Executes a device intent against HA, then VERIFIES the resulting state.
-// Silent only when the action is confirmed; failures are always spoken.
+// Success is an earcon, never speech; failures are always spoken.
 async function executeDeviceIntent (config: { token: string, url: string }, device: DeviceIntent): Promise<FastIntentResult> {
   const desired = device.kind === 'on' ? 'on' : 'off'
 
   // Single target already in the desired state -> no call, spoken answer.
   // Fresh per-entity GET: the registry is cached for 60s.
-  if (device.targets.length === 1 && !device.wholeDomain) {
+  if (device.kind !== 'set' && device.targets.length === 1 && !device.wholeDomain) {
     if (await currentState(config, device.targets[0]) === desired) {
       return { kind: 'reply', quasarDirectives: [], text: alreadyText(device.label, desired) }
     }
   }
 
-  const turnOn = device.kind === 'on'
-  if (device.wholeDomain) {
+  const turnOn = device.kind !== 'off'
+  if (device.kind === 'set') {
+    await Promise.all(device.targets.map(entityId => callSetService(config, entityId, device)))
+  } else if (device.wholeDomain) {
     await callWholeDomain(config, device.wholeDomain, turnOn)
   } else {
     await Promise.all(device.targets.map(entityId => callService(config, entityId, turnOn)))
@@ -730,45 +833,426 @@ async function executeDeviceIntent (config: { token: string, url: string }, devi
 
   if (await verifyExecution(config, device)) {
     logger.info(`Fast intent executed: ${device.kind} [${device.targets.join(', ') || device.wholeDomain}]`)
-    return { kind: 'reply', quasarDirectives: [], text: null }
+    return { kind: 'reply', quasarDirectives: earconDirectives(turnOn ? 'on' : 'off'), text: null }
   }
   logger.warn(`Fast intent VERIFY FAILED: ${device.kind} [${device.targets.join(', ') || device.wholeDomain}]`)
   return {
     kind: 'reply',
     quasarDirectives: [],
-    text: `Не получилось ${turnOn ? 'включить' : 'выключить'} ${device.label}.`
+    text: device.kind === 'set' ? `Не получилось поставить ${device.label}.` : `Не получилось ${turnOn ? 'включить' : 'выключить'} ${device.label}.`
   }
 }
+
+// Speaker volume scale: what sound_set_level takes (and the LED draws ×10).
+const MAX_LEVEL = 10
+
+// Level the speaker itself reports in the request's DeviceState (null: the request carried none).
+export function speakerLevelOf (deviceState: { SoundLevel?: number | null } | null | undefined): null | number {
+  const level = deviceState?.SoundLevel
+  return typeof level === 'number' ? level : null
+}
+
+function setLevelDirective (level: number): proto.NAlice.NAliceApi.ITDirective {
+  return {
+    IsLedSilent: true,
+    Name: 'sound_set_level',
+    Payload: encodeProtobufStruct({ new_level: level, new_percent_level: level * 10 }),
+    Type: 'client_action'
+  }
+}
+
+// Volume acts ONLY on the speaker, as client directives (never an HA call: the HA media_player is often
+// unavailable, and a guessed base made «громче» always 7 and «тише» always 3).
+// Absolute asks: sound_set_level (level 1..10, same payload as the brain's set_sound_volume).
+// Relative asks step from the level the speaker reports in the request, clamped to 1..10: «тише» never mutes
+// the station (a silent speaker drops the confirmation earcon too), «громче» at the top changes nothing, quietly.
+// `steps` is a signed multiple of the configured step (speaker.volume_step_pct, read live by executeResolved):
+// «громче» is +1 step, «намного тише» -2. Without a reported level the stock relative directives do the
+// stepping, repeated once per level (stepPct 30 = three of them, never fewer than one).
+function volumeDirectives (volume: VolumeIntent, speakerLevel: null | number, stepPct: number): proto.NAlice.NAliceApi.ITDirective[] {
+  if (volume.target !== undefined) return [setLevelDirective(Math.min(MAX_LEVEL, Math.max(1, Math.round(volume.target * MAX_LEVEL))))]
+  const levels = volumeLevels(volume.steps ?? 0, stepPct)
+  if (speakerLevel === null) {
+    const name = levels < 0 ? 'sound_quiter' : 'sound_louder'
+    return Array.from({ length: Math.abs(levels) }, () => ({ IsLedSilent: true, Name: name, Payload: {}, Type: 'client_action' }))
+  }
+  return [setLevelDirective(Math.min(MAX_LEVEL, Math.max(Math.min(1, speakerLevel), speakerLevel + levels)))]
+}
+
+// Confirmation is the earcon, played at the new level.
+function volumeResult (volume: VolumeIntent, speakerLevel: null | number, stepPct: number): FastIntentResult {
+  const directives = volumeDirectives(volume, speakerLevel, stepPct)
+  logger.info(`Fast intent volume: speaker ${speakerLevel ?? 'unknown'}, ${volume.target !== undefined ? `target ${volume.target}` : `steps ${volume.steps ?? 0} × ${stepPct}%`} -> ${directives.map(directive => directive.Name).join('+') || 'no change'}`)
+  return { kind: 'reply', quasarDirectives: [...directives, ...earconDirectives('on')], text: null }
+}
+
+// A dashboard setting by voice. A change that needs the owner's «да» (the registry's `confirm` risk, or a value
+// the voice layer had to correct) asks first; the dashboard refuses an unconfirmed voice change as well.
+async function executeSetting (setting: Extract<Resolved, { type: 'setting' }>): Promise<FastIntentResult> {
+  if (setting.ask !== undefined && setting.confirmed !== true) {
+    pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm', phrase: setting.id,
+      remember: false, resolved: setting }
+    return { kind: 'reply', listen: true, quasarDirectives: [], text: setting.ask }
+  }
+  const result = await postValue(setting.id, setting.value, { confirmed: setting.confirmed === true })
+  const entry = findSetting(setting.id)
+  if (!result.ok) {
+    logger.warn(`Fast intent setting ${setting.id} refused: ${result.err}`)
+    return { kind: 'reply', quasarDirectives: [], text: failureText(entry, result.err) }
+  }
+  logger.info(`Fast intent setting ${setting.id} changed`)
+  // The earcon says «done» unless the change is not otherwise perceivable (a chosen option, an action).
+  const done = entry === undefined ? null : doneText(entry, result.value ?? setting.value)
+  return { kind: 'reply', quasarDirectives: done === null ? earconDirectives(setting.value === false ? 'off' : 'on') : [], text: done }
+}
+
+// «какой шаг громкости»: read live from the dashboard, never from the cache alone; a secret is never read out.
+async function answerSettingQuery (id: string): Promise<FastIntentResult> {
+  const entry = findSetting(id)
+  if (entry === undefined) return { kind: 'reply', quasarDirectives: [], text: 'Такой настройки нет.' }
+  const live = await getValue(id)
+  return { kind: 'reply', quasarDirectives: [], text: queryAnswer(entry, live.ok ? live.value : entry.value) }
+}
+
+async function executeResolved (config: { token: string, url: string }, resolved: Resolved, speakerLevel: null | number): Promise<FastIntentResult> {
+  const trace = turnTrace.getStore()
+  if (trace !== undefined) trace.executed = { phrase: trace.phrase, resolved: resolved.type === 'setting' ? { ...resolved, confirmed: false } : resolved }
+  // The step is read only for a relative ask: live from the dashboard, else the cached value, else 30%.
+  if (resolved.type === 'volume') return volumeResult(resolved.volume, speakerLevel, resolved.volume.steps === undefined ? DEFAULT_VOLUME_STEP_PCT : await volumeStepPct())
+  if (resolved.type === 'setting') return await executeSetting(resolved)
+  if (resolved.type === 'setting-query') return await answerSettingQuery(resolved.id)
+  if (resolved.type === 'brain') {
+    // A confirmed fuzzy «следущий трек» is still a media key, not a question for the brain.
+    const mediaKey = parseMediaControl(resolved.text)
+    const handled = mediaKey === null ? null : await runMediaControl(config, mediaKey)
+    return handled ?? { kind: 'llm', text: resolved.text }
+  }
+  if (resolved.type === 'say') return { kind: 'reply', quasarDirectives: [], text: resolved.text }
+  return await executeDeviceIntent(config, resolved.device)
+}
+
+const YES_WORDS = ['да', 'конечно', 'точно', 'правильно', 'угу', 'ага', 'верно', 'давай', 'ок', 'окей', 'валяй', 'делай', 'именно']
+const NO_WORDS = ['нет', 'не', 'неа', 'другое', 'отмена', 'отмени', 'стоп']
 
 function resolveClarification (tokens: string[]): 'home' | 'llm' | 'yes' | 'no' | null {
   if (tokens.some(token => ['свет', 'света', 'свету', 'лампа', 'лампу'].includes(token))) return 'home'
   if (tokens.some(token => token.startsWith('музык'))) return 'llm'
-  if (tokens.some(token => ['да', 'конечно', 'точно', 'правильно', 'угу', 'ага', 'верно'].includes(token))) return 'yes'
-  if (tokens.some(token => ['нет', 'не', 'неа', 'другое', 'отмена'].includes(token))) return 'no'
+  if (tokens.some(token => YES_WORDS.includes(token))) return 'yes'
+  if (tokens.some(token => NO_WORDS.includes(token))) return 'no'
   return null
+}
+
+// ── Decision: exact layer → catalog → LLM ────────────────────────────────────
+
+function isUsable (reg: HaRegistry, entityId: string): boolean {
+  const state = reg.entities.get(entityId)?.state
+  return state !== undefined && state !== 'unavailable' && state !== 'unknown'
+}
+
+// The catalog sees the home only through this view, generated from the live
+// registry: rooms, entity concepts that actually exist, light groups, the AC range.
+function buildWorld (reg: HaRegistry, defaultArea: string): World {
+  const acIds = ['climate.kondei_1', 'climate.kondei_2'].filter(id => isUsable(reg, id))
+  const acInSpeakerRoom = acIds.filter(id => entityArea(reg, id) === defaultArea)
+  const acTargets = (areas: string[]): string[] => areas.length > 0
+    ? acIds.filter(id => areas.includes(entityArea(reg, id) ?? ''))
+    : acInSpeakerRoom.length > 0 ? acInSpeakerRoom : acIds.slice(0, 1)
+  const acAttrs = acIds.length > 0 ? reg.entities.get(acIds[0])?.attributes : undefined
+  return {
+    acLabel: areas => {
+      const declined = ROOMS.filter(room => areas.includes(room.area)).map(room => room.declined)
+      return declined.length === 0 ? 'кондиционер' : `кондиционер ${declined.join(' и ')}`
+    },
+    acRange: [acAttrs?.min_temp ?? 16, acAttrs?.max_temp ?? 30],
+    acTargets,
+    concepts: ENTITY_RULES.map(rule => ({
+      id: rule.stems[0],
+      label: rule.label,
+      stems: rule.stems,
+      targets: rule.targets(reg).filter(id => reg.entities.has(id))
+    })),
+    defaultArea,
+    lightLabel,
+    lights: areas => areas === 'all'
+      ? [...reg.entities.keys()].filter(id => id.startsWith('light.') && !JUNK_LIGHT.test(id) && isUsable(reg, id))
+      : roomLights(reg, areas),
+    rooms: ROOMS,
+    settings: getSettings()
+  }
+}
+
+export type FastDecision =
+  | { tier: 'llm' }
+  | { tier: 'math' }
+  | { tier: 'answer', text: string } // spoken read-only answer about an entity
+  | { tier: 'query', query: 'state' | 'volume', lightsOnly?: boolean }
+  | { tier: 'execute', resolved: Resolved, via: 'catalog' | 'exact', trace?: string }
+  | { tier: 'confirm', resolved: Resolved, question: string, via: 'catalog' | 'exact', declineToBrain: boolean, score?: number, trace?: string }
+  | { tier: 'clarify', question: string, via: 'catalog' | 'exact', mode: 'fill' | 'home-or-music',
+      resolved?: Resolved, fill?: (answer: Utterance) => null | Resolved, score?: number, trace?: string }
+  // Command-like but nothing probable (see intent-catalog.ts): «Повтори?», no list.
+  | { tier: 'reprompt', reason: string, trace?: string }
+
+// Single decision point shared by matchFastIntent and the corpus runner (so the
+// corpus exercises the real routing, not a re-implementation of it). The ASR often
+// appends chatter as a second sentence («Кромкость 10. Смотри, вот.»): a command in
+// any one sentence counts, the other sentences must not dilute its score.
+export function decideFastIntent (rawText: string, reg: HaRegistry, defaultArea: string = DEFAULT_AREA): FastDecision {
+  const sentences = splitSentences(rawText)
+  if (sentences.length > 1) {
+    for (const sentence of sentences) {
+      const decision = decideSentence(sentence, reg, defaultArea)
+      if (decision.tier !== 'llm' && decision.tier !== 'math') return decision
+    }
+  }
+  return decideSentence(rawText, reg, defaultArea)
+}
+
+// «зажги свет в», «включи кондиционер на»: the end was cut off, so what would execute is not what was said (the lost
+// word was the room). Ask again rather than act on the part that survived.
+function decideSentence (rawText: string, reg: HaRegistry, defaultArea: string): FastDecision {
+  const decision = decideSentenceUncut(rawText, reg, defaultArea)
+  return decision.tier === 'execute' && endsMidPhrase(tokenize(normalize(rawText))) ? { reason: 'cut-off', tier: 'reprompt' } : decision
+}
+
+function decideSentenceUncut (rawText: string, reg: HaRegistry, defaultArea: string): FastDecision {
+  // «какой шаг громкости», «что с озвучкой»: the question words would defeat the catalog, so a dashboard setting
+  // asked about is answered here (live value, read-only) before any command grammar sees the phrase.
+  const asked = matchSettingQuery(normalize(rawText), getSettings())
+  if (asked !== null) return { resolved: { id: asked.id, type: 'setting-query' }, tier: 'execute', trace: `setting-query ${asked.id}`, via: 'catalog' }
+  const intent = scoreIntent(rawText, reg, defaultArea)
+  if (intent !== null) {
+    if (intent.kind === 'math') return { tier: 'math' }
+    if (intent.kind === 'state_query') return { lightsOnly: intent.lightsOnly === true, query: 'state', tier: 'query' }
+    if (intent.kind === 'volume' && intent.volume !== undefined) {
+      return intent.volume.kind === 'query'
+        ? { query: 'volume', tier: 'query' }
+        : { resolved: { type: 'volume', volume: intent.volume }, tier: 'execute', via: 'exact' }
+    }
+    if (intent.device !== undefined) {
+      if (intent.score >= EXECUTE_THRESHOLD && intent.ambiguous !== true) {
+        // «включи свет 50»: a spoken value means a set-point, not a bare switch-on.
+        if (parseNumbers(tokenize(normalize(rawText)), false).length > 0) {
+          const withValue = catalogDecision(rawText, reg, defaultArea)
+          if ((withValue.tier === 'execute' || withValue.tier === 'confirm') &&
+            withValue.resolved.type === 'device' && withValue.resolved.device.kind === 'set') return withValue
+        }
+        return { resolved: { device: intent.device, type: 'device' }, tier: 'execute', via: 'exact' }
+      }
+      if (intent.ambiguous === true) {
+        return { mode: 'home-or-music', question: 'Свет или музыку?', resolved: { device: intent.device, type: 'device' },
+          score: intent.score, tier: 'clarify', via: 'exact' }
+      }
+      if (intent.score >= CLARIFY_THRESHOLD) {
+        return { declineToBrain: true, question: `Ты про ${intent.device.label}?`, resolved: { device: intent.device, type: 'device' },
+          score: intent.score, tier: 'confirm', via: 'exact' }
+      }
+    }
+  }
+  const catalog = catalogDecision(rawText, reg, defaultArea)
+  if (catalog.tier !== 'llm') return catalog
+  // Last local resort before the brain: read-only questions about named entities
+  // («что со стрелицией», «какая температура на улице»). Never executes.
+  const entity = matchEntityQuery(rawText, reg.entities, reg.areaByEntity)
+  if (entity.kind === 'answer') return { text: entity.text, tier: 'answer' }
+  if (entity.kind === 'confirm') {
+    return { declineToBrain: true, question: entity.text, resolved: { text: entity.answerText ?? entity.text, type: 'say' },
+      tier: 'confirm', via: 'catalog' }
+  }
+  if (entity.kind === 'reprompt') return { reason: 'entity-ties', tier: 'reprompt' }
+  return catalog
+}
+
+function catalogDecision (rawText: string, reg: HaRegistry, defaultArea: string): FastDecision {
+  const decision = decideCatalog(normalize(rawText), buildWorld(reg, defaultArea))
+  if (decision.tier === 'execute') return { resolved: decision.resolved, tier: 'execute', trace: decision.trace, via: 'catalog' }
+  if (decision.tier === 'confirm') {
+    return { declineToBrain: false, question: decision.question, resolved: decision.resolved, tier: 'confirm', trace: decision.trace, via: 'catalog' }
+  }
+  if (decision.tier === 'clarify') {
+    return { fill: decision.fill, mode: 'fill', question: decision.question, tier: 'clarify', trace: decision.trace, via: 'catalog' }
+  }
+  if (decision.tier === 'reprompt') return { reason: decision.reason, tier: 'reprompt', trace: decision.trace }
+  return { tier: 'llm' }
 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
-export async function matchFastIntent (rawText: string): Promise<FastIntentResult | null> {
+interface MatchOptions {
+  // This turn continues a dialog the station is in (follow-up window opened by a question, or our own speech is
+  // still playing): a terminator ends the dialog and leaves the music alone. Absent/false: a fresh turn.
+  dialogActive?: boolean
+  // Set on the re-run of an already corrected phrase: one repair per utterance.
+  noCorrect?: boolean
+  // The speaker's own volume (0..10) from the request's DeviceState: the base of «громче»/«тише» and the answer
+  // to «какая громкость». Absent when the request carried no device state.
+  speakerLevel?: null | number
+  // Where the turn came from: a spoken one wins when «повтори» looks for the last turn (turn-memory.ts).
+  origin?: TurnOrigin
+  // The station that heard the turn (StationInfo.duid): a phrase without a room means the room Home Assistant puts it in.
+  // Absent for callers that have no station (the corpus runner).
+  deviceId?: string
+}
+
+// The room a phrase without one is about: the area Home Assistant gives the speaker that heard it, when that is one of the
+// home's rooms; otherwise the legacy default (living room).
+function roomOfSpeaker (reg: HaRegistry, deviceId: string | undefined): string {
+  const area = speakerArea(reg.areaByEntity, deviceId)
+  return area !== undefined && ROOMS.some(room => room.area === area) ? area : DEFAULT_AREA
+}
+
+// Repair of a short phrase the fast layer could not decide on (asr-correct.ts). The corrected text meets every
+// confirm/clarify rule a spoken phrase would. High confidence («act»): it is routed as if the owner had said it.
+// Middle band («confirm»): a device action is offered back («Включи свет», верно?») and only a «да» runs it, because
+// a lost first syllable cannot tell «включи» from «выключи». Anything else stays as the fast layer decided.
+async function correctionFor (text: string, tier: FastDecision['tier'], options: MatchOptions, reg: HaRegistry): Promise<FastIntentResult | null> {
+  if (options.noCorrect === true || !eligible(text, tier) || !allowCorrection()) return null
+  const correction = await requestCorrection(text)
+  if (correction === null) return null
+  const mode = shadowOnly() ? 'ignore' : correction.mode
+  logger.info(describeCorrection(text, correction, mode))
+  if (mode === 'ignore') return null
+  if (mode === 'confirm') {
+    const heard = decideFastIntent(correction.text, reg, roomOfSpeaker(reg, options.deviceId))
+    const question = confirmationQuestion(correction.text)
+    if (heard.tier !== 'execute' || question === null) return null
+    pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
+      phrase: normalize(text), resolved: heard.resolved }
+    return { kind: 'reply', listen: true, quasarDirectives: [], text: question }
+  }
+  const rerun = await matchFastIntent(correction.text, { ...options, noCorrect: true })
+  if (rerun !== null) return rerun
+  // Nothing local matched the repaired phrase either: the brain gets the repaired text, not the garbled one.
+  return tier === 'llm' ? { kind: 'llm', text: correction.text } : null
+}
+
+// A repeated hazardous action (kettle, sockets) is asked about first; lights, climate, volume steps and media keys
+// are idempotent or bounded and simply run again.
+function repeatQuestion (resolved: Resolved): null | string {
+  if (resolved.type !== 'device' || resolved.device.kind === 'off') return null
+  if (resolved.device.wholeDomain !== undefined || resolved.device.targets.every(entityId => /^(light|climate)\./.test(entityId))) return null
+  return `Повторить: ${resolved.device.kind === 'set' ? 'поставить' : 'включить'} ${resolved.device.label}?`
+}
+
+// «повтори»: say the last answer again; after a silent command run it again (or ask when that is not safe).
+// While a question is still pending the repeat is the question itself.
+async function repeatLast (config: { token: string, url: string }, want: RepeatTarget, speakerLevel: null | number): Promise<FastIntentResult | null> {
+  if (pendingClarification !== null && Date.now() < pendingClarification.expiresAt) {
+    const question = latestTurn('answer')
+    if (question?.asked === true) {
+      pendingClarification.expiresAt = Date.now() + AMBIGUITY_TTL_MS
+      return { kind: 'reply', listen: true, quasarDirectives: [], text: question.spoken }
+    }
+  }
+  const turn = latestTurn(want)
+  if (turn === null) return null
+  if (want !== 'command' && turn.spoken !== null) return { kind: 'reply', listen: turn.asked, quasarDirectives: [], text: turn.spoken }
+  if (turn.action === null) return null
+  const question = repeatQuestion(turn.action.resolved)
+  if (question === null) return await executeResolved(config, turn.action.resolved, speakerLevel)
+  pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
+    phrase: turn.action.phrase, remember: false, resolved: turn.action.resolved }
+  return { kind: 'reply', listen: true, quasarDirectives: [], text: question }
+}
+
+const FOLLOW_UP_OPENERS = ['а', 'и', 'тоже', 'там']
+const FOLLOW_UP_FILLERS = ['а', 'и', 'ну', 'тоже', 'там', 'еще', 'вот']
+const ROOM_PREPOSITIONS = ['в', 'во', 'на', 'у']
+const ROOM_NOUNS = ['этаже', 'этаж', 'комнате', 'комнату']
+
+function isRoomWord (token: string): boolean {
+  return ROOM_NOUNS.includes(token) || ROOMS.some(room => room.keywords.some(keyword => keyword.split(' ').some(part => token.startsWith(part))))
+}
+
+// «Включи свет в гостиной» … «а на кухне?»: the previous device command aimed at the room just named.
+// Null unless the phrase is nothing but such a room follow-up and a command ran in the last minutes.
+function followUpPhrase (tokens: string[]): null | string {
+  const prior = latestAction()
+  if (prior === null || prior.resolved.type !== 'device' || !FOLLOW_UP_OPENERS.includes(tokens[0] ?? '')) return null
+  const words = tokens.filter(token => token !== 'алиса' && !FOLLOW_UP_FILLERS.includes(token))
+  if (words.length === 0 || words.length > 4 || !words.every(token => ROOM_PREPOSITIONS.includes(token) || isRoomWord(token))) return null
+  if (!words.some(isRoomWord)) return null
+  const kept: string[] = []
+  for (const token of tokenize(prior.phrase).filter(word => word !== 'алиса')) {
+    if (!isRoomWord(token)) {
+      kept.push(token)
+    } else if (ROOM_PREPOSITIONS.includes(kept[kept.length - 1] ?? '')) {
+      kept.pop()
+    }
+  }
+  return [...kept, ...words].join(' ')
+}
+
+export async function matchFastIntent (rawText: string, options: MatchOptions = {}): Promise<FastIntentResult | null> {
+  const outer = turnTrace.getStore()
+  const trace: TurnTrace = outer ?? { executed: null, phrase: '', skipRecording: false }
+  const result = outer === undefined
+    ? await turnTrace.run(trace, async () => await matchFastIntentCore(rawText, options))
+    : await matchFastIntentCore(rawText, options)
+  if (result?.kind === 'reply' && result.listen === true && result.text !== null) noteAsked(result.text)
+  if (outer === undefined && !trace.skipRecording && result?.kind === 'reply') {
+    const turn: Turn = {
+      action: result.text === null ? trace.executed : null,
+      asked: result.listen === true && result.text !== null,
+      at: Date.now(),
+      heard: rawText,
+      origin: options.origin ?? 'voice',
+      spoken: result.text
+    }
+    recordTurn(turn)
+  }
+  return result
+}
+
+async function matchFastIntentCore (rawText: string, options: MatchOptions): Promise<FastIntentResult | null> {
   const config = getConfig()
   if (!config) return null
   const text = rawText?.trim()
   if (!text) return null
   const s = normalize(text)
-  const tokens = s.split(' ')
+  const tokens = tokenize(s)
+  const speakerLevel = options.speakerLevel ?? null
+  const trace = turnTrace.getStore()
+  if (trace !== undefined) trace.phrase = s
 
   try {
-    // A clarifying question is pending: this turn is the answer.
+    // «ничего», «хватит», «спасибо», «отмена», «пока»: silent end of the dialog, before any pending question and
+    // before the brain. Only the stop class on a fresh turn (no dialog in progress) reaches the music.
+    const end = parseEndDialog(text)
+    if (end !== null) {
+      pendingClarification = null
+      if (end === 'stop' && options.dialogActive !== true) return await runMediaControl(config, 'stop') ?? DIALOG_END
+      return DIALOG_END
+    }
+
+    // «повтори», «ещё раз», «прошлую команду»: answered from the last turns, never by a clarifying brain question.
+    // Without a recent turn the phrase goes on (to the brain, which has the adapter's dialog list).
+    const repeat = parseRepeat(tokens)
+    if (repeat !== null) {
+      const repeated = await repeatLast(config, repeat, speakerLevel)
+      if (repeated !== null) {
+        if (trace !== undefined) trace.skipRecording = true
+        logger.info(`Fast intent repeat (${repeat}) for '${s}': ${repeated.kind === 'reply' ? repeated.text ?? '(command again)' : repeated.text}`)
+        return repeated
+      }
+    }
+
+    // A question is pending: this turn is the answer.
     if (pendingClarification !== null) {
       const pending = pendingClarification
       pendingClarification = null
+      if (trace !== undefined && pending.mode !== 'fill') trace.phrase = pending.phrase
       if (Date.now() < pending.expiresAt) {
         const answer = resolveClarification(tokens)
-        if (pending.mode === 'home-or-music') {
+        if (pending.mode === 'fill') {
+          // «Какую громкость поставить?» → «семь»; «Громкость или яркость?» → «громкость».
+          const filled = pending.fill?.(parseUtterance(s, ROOMS, [])) ?? null
+          if (filled !== null) return await executeResolved(config, filled, speakerLevel)
+          if (answer === 'no') return DIALOG_END
+        } else if (pending.mode === 'home-or-music') {
           if (answer === 'home') {
             rememberAmbiguity(pending.phrase, 'home')
-            return await executeDeviceIntent(config, pending.device)
+            return await executeResolved(config, pending.resolved!, speakerLevel)
           }
           if (answer === 'llm') {
             rememberAmbiguity(pending.phrase, 'llm')
@@ -777,14 +1261,66 @@ export async function matchFastIntent (rawText: string): Promise<FastIntentResul
           }
         } else {
           if (answer === 'yes') {
-            rememberAmbiguity(pending.phrase, 'home')
-            return await executeDeviceIntent(config, pending.device)
+            const confirmed = pending.resolved!
+            // A setting is never «выучено»: its confirmation is asked every time, and «да» marks that this very change was confirmed.
+            if (pending.remember !== false && confirmed.type !== 'setting') rememberAmbiguity(pending.phrase, 'home')
+            return await executeResolved(config, confirmed.type === 'setting' ? { ...confirmed, confirmed: true } : confirmed, speakerLevel)
           }
           if (answer === 'no') {
-            return { kind: 'llm', text: pending.phrase }
+            return pending.declineToBrain
+              ? { kind: 'llm', text: pending.phrase }
+              : DIALOG_END
           }
         }
         // Unrecognized answer: fall through and match the new phrase normally.
+      }
+    }
+    if (trace !== undefined) trace.phrase = s
+
+    // «а на кухне?» right after «включи свет в гостиной»: the same command for the room just named.
+    const followUp = followUpPhrase(tokens)
+    if (followUp !== null) {
+      logger.info(`Fast intent follow-up '${s}' -> '${followUp}'`)
+      const rerun = await matchFastIntent(followUp, { ...options, noCorrect: true })
+      if (rerun !== null) return rerun
+    }
+
+    // Grammar first (adapter /intent/decide, no language model): after a pending answer was handled and the room
+    // follow-up («а на кухне?», which needs the previous device command the grammar never sees) had its turn, before
+    // the catalog and the brain. Fail-open: null (timeout, adapter down, GRAMMAR_HOOK=shadow|off) means the phrase goes
+    // on through the tiers below exactly as before.
+    const grammar = await grammarRoute(text, { dialogActive: options.dialogActive === true, speakerLevel })
+    if (grammar !== null && grammar.route !== 'none') {
+      let grammarResult: FastIntentResult | null = null
+      if (grammar.route === 'reply' && grammar.text !== null) {
+        grammarResult = grammar.listen
+          ? { kind: 'reply', listen: true, quasarDirectives: [], text: grammar.text }
+          : { kind: 'reply', quasarDirectives: [], text: grammar.text }
+      } else if (grammar.route === 'silent') {
+        grammarResult = DIALOG_END
+      } else if (grammar.route === 'dialog_end') {
+        pendingClarification = null
+        grammarResult = DIALOG_END
+      } else if (grammar.route === 'volume' && grammar.volume !== null) {
+        const asked = grammar.volume
+        const volume: VolumeIntent = { kind: 'set' }
+        if (asked.target !== undefined) volume.target = asked.target
+        else if (asked.deltaLevels !== undefined) {
+          // Levels are the speaker's own 0..10 scale; without its reported level only the direction is known.
+          if (speakerLevel !== null && Number.isFinite(speakerLevel)) volume.target = Math.min(1, Math.max(0, (speakerLevel + asked.deltaLevels) / MAX_LEVEL))
+          else volume.steps = Math.sign(asked.deltaLevels)
+        } else if (asked.steps !== undefined) volume.steps = asked.steps
+        if (volume.target !== undefined || volume.steps !== undefined) {
+          // «повтори» after a level change repeats the level it reached (a target), not the change: the recorded
+          // command has no way to carry a delta in levels.
+          if (trace !== undefined) trace.executed = { phrase: trace.phrase, resolved: { type: 'volume', volume } }
+          // The step is read only for a relative ask, the same way executeResolved does.
+          grammarResult = volumeResult(volume, speakerLevel, volume.steps === undefined ? DEFAULT_VOLUME_STEP_PCT : await volumeStepPct())
+        }
+      }
+      if (grammarResult !== null) {
+        logger.info(`Grammar route '${s}' -> ${grammar.intent ?? 'none'} (${grammar.route}, ${grammar.ms} ms)`)
+        return grammarResult
       }
     }
 
@@ -798,80 +1334,129 @@ export async function matchFastIntent (rawText: string): Promise<FastIntentResul
       }
     }
 
+    // An explicit TV app request always targets the TV/Chromecast pair, even from another speaker.
+    const tvApp = parseTvAppIntent(text)
+    if (tvApp !== null) {
+      const outcome = await executeTvAppIntent(tvApp, {
+        callScript: async entityId => {
+          const response = await haFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
+          if (response.status === 202) throw restartingError(response)
+          if (!response.ok) throw new Error('TV application launch was not accepted')
+        },
+        readNative: async () => await currentEntity(config, 'media_player.televizor')
+      })
+      logger.info(`Fast TV application ${tvApp.app}: ${outcome.status}`)
+      return outcome.status === 'confirmed'
+        ? { kind: 'reply', quasarDirectives: earconDirectives('on'), text: null }
+        : { kind: 'reply', quasarDirectives: [], text: `Команда отправлена. Открытие ${tvApp.label} на телевизоре пока не подтверждено.` }
+    }
+
+    // The named fireplace is the fixed Kodi video, regardless of the speaker's room.
+    const fireplace = parseFireplaceIntent(text)
+    if (fireplace !== null) {
+      const outcome = await executeFireplaceIntent(fireplace, {
+        callScript: async entityId => {
+          const response = await haFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
+          if (response.status === 202) throw restartingError(response)
+          if (!response.ok) throw new Error('Projector fireplace launch was not accepted')
+        },
+        readNative: async () => await currentEntity(config, 'media_player.home'),
+        readReadiness: async () => await currentEntity(config, 'sensor.living_room_fireplace')
+      })
+      logger.info(`Fast projector fireplace: ${outcome.status}`)
+      return outcome.status === 'confirmed'
+        ? { kind: 'reply', quasarDirectives: earconDirectives('on'), text: null }
+        : { kind: 'reply', quasarDirectives: [], text: 'Команда отправлена. Воспроизведение камина на проекторе пока не подтверждено.' }
+    }
+
+    // «стоп», «пауза», «продолжи», «дальше», «назад»: the speaker's own AirPlay playback (Music
+    // Assistant or a phone), else a Home Assistant player. Never the brain: it can only talk.
+    const mediaKey = parseMediaControl(s)
+    if (mediaKey !== null) {
+      const handled = await runMediaControl(config, mediaKey)
+      if (handled !== null) return handled
+    }
+
     const reg = await getRegistry(config)
-    const intent = scoreIntent(text, reg)
-    if (intent === null) {
-      // Short no-match: shadow-classify before falling through to the LLM brain.
-      if (tokens.length <= 4) shadowClassify(text, null, 'nomatch')
-      return null
-    }
-    // Gray zone (fuzzy 0.5-0.9 or ambiguity): shadow log only, no behavior change.
-    if ((intent.score >= CLARIFY_THRESHOLD && intent.score < EXECUTE_THRESHOLD) || intent.ambiguous === true) {
-      shadowClassify(text, intent.score, 'gray')
+    const area = roomOfSpeaker(reg, options.deviceId)
+    const decision = decideFastIntent(text, reg, area)
+    if (decision.tier !== 'llm') logger.info(`Fast intent room for '${s}': ${area} (station ${options.deviceId ?? 'unknown'})`)
+    if (decision.tier !== 'reprompt') lastRepromptAt = 0
+    logger.debug(`Fast intent decision '${s}': ${decision.tier} ${'trace' in decision ? decision.trace ?? '' : ''}`)
+
+    // Gray zone / reprompt: a repaired phrase goes through the same tiers instead of asking or staying unclear.
+    // A silenced reprompt (noise loop) is not worth a model call.
+    if (decision.tier !== 'llm' && !(decision.tier === 'reprompt' && Date.now() - lastRepromptAt < REPROMPT_LOOP_MS)) {
+      const repaired = await correctionFor(text, decision.tier, options, reg)
+      if (repaired !== null) return repaired
     }
 
-
-    if (intent.kind === 'volume' && intent.volume !== undefined) {
-      const volume = intent.volume
-      if (volume.kind === 'query') {
-        const level = reg.entities.get(STATION_MEDIA_PLAYER)?.attributes.volume_level
-        const answer = typeof level === 'number'
-          ? `Громкость ${Math.round(level * 100)} процентов.`
-          : 'Не знаю текущую громкость.'
-        return {
-          kind: 'reply',
-          quasarDirectives: [],
-          text: reg.stale === true ? `По последним данным, ${answer[0].toLowerCase()}${answer.slice(1)}` : answer
+    switch (decision.tier) {
+      case 'math':
+      case 'llm': {
+        // «включи Sex Pistols»: nothing local matched, so try the music catalog before the brain.
+        const music = await tryMusicIntent(s)
+        if (music !== null) return { kind: 'reply', quasarDirectives: [], text: music.text }
+        // Short no-match («ключи свет», «…ставь таймер на пять минут»): one repair attempt before the brain.
+        const repaired = await correctionFor(text, decision.tier, options, reg)
+        if (repaired !== null) return repaired
+        // Short no-match: shadow-classify before falling through to the LLM brain.
+        if (tokens.length <= 4) shadowClassify(text, null, 'nomatch')
+        return null
+      }
+      case 'answer':
+        return { kind: 'reply', quasarDirectives: [], text: decision.text }
+      case 'query': {
+        if (decision.query === 'volume') {
+          return {
+            kind: 'reply',
+            quasarDirectives: [],
+            // Same units as the dashboard (0..10), short; the only volume turn that speaks.
+            text: speakerLevel === null ? 'Не знаю текущую громкость.' : `Громкость ${speakerLevel} из ${MAX_LEVEL}.`
+          }
         }
+        // State queries only ever ANSWER — execution is impossible by design.
+        const fresh = await getRegistry(config, true)
+        return { kind: 'reply', quasarDirectives: [], text: buildStateReport(fresh, decision.lightsOnly === true) }
       }
-      let target = volume.target
-      if (volume.relative !== undefined) {
-        const current = reg.entities.get(STATION_MEDIA_PLAYER)?.attributes.volume_level ?? 0.5
-        target = current + volume.relative
+      case 'execute':
+        if (decision.via === 'catalog') shadowClassify(text, null, 'catalog')
+        return await executeResolved(config, decision.resolved, speakerLevel)
+      case 'confirm': {
+        if (decision.via === 'exact') shadowClassify(text, decision.score ?? null, 'gray')
+        else shadowClassify(text, null, 'catalog')
+        // A phrase the owner already confirmed once runs directly («выучено»).
+        if (decision.resolved.type !== 'setting' && loadAmbiguityMemory()[s] === 'home') return await executeResolved(config, decision.resolved, speakerLevel)
+        pendingClarification = { declineToBrain: decision.declineToBrain, expiresAt: Date.now() + AMBIGUITY_TTL_MS,
+          mode: 'confirm', phrase: s, resolved: decision.resolved }
+        return { kind: 'reply', listen: true, quasarDirectives: [], text: decision.question }
       }
-      const clamped = Math.round(Math.min(1, Math.max(0.05, target ?? 0.5)) * 100) / 100
-      return {
-        kind: 'reply',
-        quasarDirectives: [{
-          Name: 'set_volume',
-          Payload: encodeProtobufStruct({ volume: clamped }),
-          Type: 'client_action'
-        }],
-        text: `Громкость ${Math.round(clamped * 100)} процентов.`
+      case 'clarify': {
+        if (decision.via === 'exact') {
+          // Legacy «Свет или музыку?»: the remembered choice skips the question.
+          shadowClassify(text, decision.score ?? null, 'gray')
+          const remembered = loadAmbiguityMemory()[s]
+          if (remembered === 'home') return await executeResolved(config, decision.resolved!, speakerLevel)
+          if (remembered === 'llm') return { kind: 'llm', text: s }
+        } else {
+          shadowClassify(text, null, 'catalog')
+        }
+        pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, fill: decision.fill,
+          mode: decision.mode, phrase: s, resolved: decision.resolved }
+        return { kind: 'reply', listen: true, quasarDirectives: [], text: decision.question }
       }
-    }
-
-    // State queries only ever ANSWER — execution is impossible by design.
-    if (intent.kind === 'state_query') {
-      const fresh = await getRegistry(config, true)
-      return { kind: 'reply', quasarDirectives: [], text: buildStateReport(fresh, intent.lightsOnly === true) }
-    }
-
-    // Command: dispatch by score.
-    if (intent.score >= EXECUTE_THRESHOLD && !intent.ambiguous) {
-      return await executeDeviceIntent(config, intent.device!)
-    }
-    if (intent.score >= CLARIFY_THRESHOLD || intent.ambiguous === true) {
-      const remembered = loadAmbiguityMemory()[s]
-      if (intent.ambiguous === true && remembered === 'home') {
-        return await executeDeviceIntent(config, intent.device!)
-      }
-      if (intent.ambiguous === true && remembered === 'llm') {
-        return { kind: 'llm', text: s }
-      }
-      const mode = intent.ambiguous === true ? 'home-or-music' : 'confirm'
-      pendingClarification = { device: intent.device!, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode, phrase: s }
-      return {
-        kind: 'reply',
-        quasarDirectives: [],
-        text: mode === 'home-or-music' ? 'Свет или музыку?' : `Ты про ${intent.device!.label}?`
+      case 'reprompt': {
+        // Never a list of guesses. Said once; a second miss right after it stays silent so
+        // the station cannot be talked into a «не расслышала» loop by noise.
+        if (Date.now() - lastRepromptAt < REPROMPT_LOOP_MS) return { kind: 'reply', quasarDirectives: [], text: null }
+        lastRepromptAt = Date.now()
+        return { kind: 'reply', listen: true, quasarDirectives: [], text: REPROMPT_TEXT }
       }
     }
-    return null
   } catch (error) {
     if (error instanceof HaRestartingError) {
-      logger.warn(`Fast intent '${s}' queued: Home Assistant is restarting`)
-      return { kind: 'reply', quasarDirectives: [], text: HA_RECOVERY_TEXT }
+      logger.warn(`Fast intent '${s}' queued: Home Assistant is restarting (eta ${error.etaSeconds ?? '?'}s)`)
+      return { kind: 'reply', quasarDirectives: [], text: haRecoveryText(error.etaSeconds) }
     }
     logger.error(`Fast intent '${s}' failed:`, error)
     return { kind: 'reply', quasarDirectives: [], text: 'Не удалось выполнить команду умного дома.' }

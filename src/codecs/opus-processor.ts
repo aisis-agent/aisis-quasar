@@ -19,6 +19,9 @@ export class OpusProcessor {
   private serial: number | null = null
   private nextSequence: number | null = null
   private synthesizedHead = false
+  private streamPeak = 0
+  private streamSquares = 0
+  private streamSamples = 0
 
   constructor (private readonly onAudioData: (data: Buffer) => Promise<void>,
     private readonly onSampleRate: (sampleRate: number) => Promise<void>) {}
@@ -52,6 +55,7 @@ export class OpusProcessor {
   }
 
   finish (): void {
+    this.logStreamLevels('eof')
     if (this.pageBytes.length > 0) console.warn('[opus-processor] truncated Ogg page at native EOF, discarding', this.pageBytes.length, 'bytes')
     if (this.packetSegments.length > 0) console.warn('[opus-processor] incomplete Opus packet at native EOF, discarding')
   }
@@ -100,7 +104,10 @@ export class OpusProcessor {
       this.packetSegments = []
       this.packetBytes = 0
       this.synthesizedHead = false
+      this.logStreamLevels('new OpusHead')
       const head = parseOpusHead(packet)
+      console.info(`[opus-processor] OpusHead channels=${head.channelCount} preSkip=${head.preSkip} ` +
+        `inputRate=${head.sampleRate} outputGain=${head.outputGain} (${(head.outputGain / 256).toFixed(2)} dB)`)
       if (head.channelCount !== 1) {
         throw new Error(`Unsupported number of channels: ${head.channelCount}`)
       }
@@ -123,9 +130,38 @@ export class OpusProcessor {
     }
     // The comment header may itself span several pages. Page number alone is
     // not a header boundary, and its continuation must not reach the decoder.
-    if (packet.subarray(0, 8).equals(Buffer.from('OpusTags'))) return
+    if (packet.subarray(0, 8).equals(Buffer.from('OpusTags'))) {
+      console.info('[opus-processor] OpusTags', JSON.stringify(packet.subarray(8, 8 + 160).toString('latin1').replace(/[^\x20-\x7e]/g, '.')))
+      return
+    }
     if (packet.length === 0) throw new Error('Empty Opus audio packet')
-    await this.onAudioData(this.encoder.decode(packet))
+    const decoded = this.encoder.decode(packet)
+    this.measure(decoded)
+    await this.onAudioData(decoded)
+  }
+
+  // The station's far-field uplink is ~45 dB below full scale. Per-stream
+  // peak/RMS of the decoded PCM, next to the OpusHead line, shows whether any
+  // gain is carried in the header and what level the recognizer really gets.
+  private measure (pcm: Buffer): void {
+    for (let offset = 0; offset + 1 < pcm.length; offset += 2) {
+      const sample = pcm.readInt16LE(offset)
+      const magnitude = Math.abs(sample)
+      if (magnitude > this.streamPeak) this.streamPeak = magnitude
+      this.streamSquares += sample * sample
+      this.streamSamples += 1
+    }
+  }
+
+  private logStreamLevels (reason: string): void {
+    if (this.streamSamples === 0) return
+    const rms = Math.sqrt(this.streamSquares / this.streamSamples)
+    const dbfs = (value: number): string => value > 0 ? (20 * Math.log10(value / 32768)).toFixed(1) : '-inf'
+    console.info(`[opus-processor] decoded stream (${reason}): ${(this.streamSamples / 48000).toFixed(2)}s ` +
+      `peak=${this.streamPeak} (${dbfs(this.streamPeak)} dBFS) rms=${rms.toFixed(1)} (${dbfs(rms)} dBFS)`)
+    this.streamPeak = 0
+    this.streamSquares = 0
+    this.streamSamples = 0
   }
 }
 
