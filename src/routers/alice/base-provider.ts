@@ -286,7 +286,7 @@ export class BaseDirectiveFunctionProvider extends AbstractDirectiveFunctionProv
     this.addFunction('set_sound_volume_quieter', 'Atomically make smart speaker volume quieter', z.unknown(),
       () => soundQuieterDirective)
     this.addFunction('set_sound_volume', 'Set volume on smart speaker', z.object({
-      volume: z.number().int().min(1).max(10)
+      volume: z.number().int().min(0).max(10)
     }), (data) => soundSetLevelDirective(data.volume))
     this.addFunction('play_iot_sound', 'Play IoT power on/power off sound on smart speaker', z.object({
       isPowerOn: z.boolean()
