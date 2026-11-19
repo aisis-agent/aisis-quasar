@@ -92,3 +92,4 @@ for (const [domain, c] of [...byCat].sort((a, b) => b[1].fail - a[1].fail)) {
   for (const f of c.fails.slice(0, 12)) console.log(`    ✗ ${f}`)
   if (c.fails.length > 12) console.log(`    … ещё ${c.fails.length - 12}`)
 }
+process.exitCode = pass === rows.length ? 0 : 1
