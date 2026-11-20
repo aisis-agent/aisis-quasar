@@ -2,7 +2,7 @@ import { Span, startInactiveSpan } from '@sentry/node'
 
 import { ProcessorBackend, ProcessorPartialResponse, ProcessorSession } from '../../backend/backend'
 import { matchFastIntent, speakerLevelOf } from '../../backend/ha-intents'
-import { recordTurn, TurnOrigin } from '../../backend/turn-memory'
+import { recordTurn, stationKey, TurnOrigin } from '../../backend/turn-memory'
 import { getLogger } from '../../logger'
 import { Notifier } from '../../notifier'
 import proto from '../../protos/protos'
@@ -124,8 +124,9 @@ export class InputHandler {
   private requestSent: boolean = false
   private session: null | ProcessorSession = null
   private span: Span | undefined
-  // The utterance the brain is answering: recorded with its answer so «повтори» can say it again (turn-memory.ts).
-  private brainTurn: null | { heard: string, origin: TurnOrigin } = null
+  // The utterance the brain is answering and the station that said it: recorded with its answer so «повтори» can say it again to that
+  // station only (turn-memory.ts).
+  private brainTurn: null | { heard: string, origin: TurnOrigin, station: string } = null
   private followUpOpenedAt = 0
   private spokenUntil = 0
 
@@ -388,7 +389,7 @@ export class InputHandler {
       }
     }
 
-    this.brainTurn = { heard: input.text, origin: 'voice' }
+    this.brainTurn = { heard: input.text, origin: 'voice', station: stationKey(input.metadata.internal.deviceId) }
     await this.session.process({
       metadata: input.metadata,
       text: brainText
@@ -448,7 +449,7 @@ export class InputHandler {
       this.noteResponse(partialResponse.text, shouldListen)
       if (this.brainTurn !== null && partialResponse.text) {
         recordTurn({ action: null, asked: shouldListen, at: Date.now(), heard: this.brainTurn.heard, origin: this.brainTurn.origin,
-          spoken: partialResponse.text })
+          spoken: partialResponse.text, station: this.brainTurn.station })
       }
       this.brainTurn = null
       if (!shouldListen) {

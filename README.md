@@ -19,7 +19,7 @@ server instead of Yandex's cloud, and AISIS answers what it hears.
 | Area | Files |
 |---|---|
 | Streaming STT hand-off, Opus/Ogg and voice-input fixes | `src/backend/stt/gigaam.ts`, `src/codecs/*`, `src/routers/uniproxy/*` |
-| Fast local intent layer (Home Assistant: lights, sockets, AC, volume, state queries) before the LLM | `src/backend/ha-intents.ts`, `entity-index.ts`, `intent-catalog.ts`, `fuzzy-ru.ts`, `settings-voice.ts`, `tv-app-intents.ts`, `music-*.ts`, `turn-memory.ts`, `end-dialog.ts` |
+| Fast local intent layer (Home Assistant: lights, sockets, AC, volume, state queries) before the LLM | `src/backend/ha-intents.ts`, `entity-index.ts`, `intent-catalog.ts`, `fuzzy-ru.ts`, `settings-voice.ts`, `tv-app-intents.ts`, `music-*.ts`, `turn-memory.ts`, `end-dialog.ts`, `negation.ts` |
 | Intent grammar hook (asks the AISIS adapter first) and ASR correction | `src/backend/grammar-hook.ts`, `asr-correct.ts` |
 | Room of the speaker that heard a phrase, spotter clips | `src/backend/speaker-room.ts`, `src/routers/uniproxy/spotter-clips.ts` |
 | Weather questions answered by weather-cli, not the HA weather entity | `src/backend/entity-index.ts` |
@@ -97,9 +97,10 @@ corpus-receipt protocol). Offline routing check, no Home Assistant needed:
 pnpm install --frozen-lockfile --ignore-scripts
 node_modules/.bin/tsx src/backend/corpus/run_corpus.mts    # exits 1 unless every row routes as expected
 node_modules/.bin/tsx src/backend/corpus/run_dialogs.mts   # multi-turn dialogs, exits 1 on any failure
+node_modules/.bin/tsx src/backend/corpus/run_safety.mts    # negation and per-station state, exits 1 on any failure
 ```
 
-CI runs both and the admission check.
+CI runs all three, the admission check and the resource-bound checks.
 
 ## Contributing
 

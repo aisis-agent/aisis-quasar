@@ -8,6 +8,10 @@
 // Process-level on purpose, like the pending clarification: a speaker reconnecting (every dialog opens a
 // fresh websocket) must not lose it. A restart starts empty; the brain then gets the same recent dialogs
 // from the adapter's dialog store (dialog_context.py) and repeats from there.
+//
+// Per station: the home has several speakers, and «повтори» on one must not repeat what another heard, nor «а на кухне?» continue
+// another's command. The key is the station's device id (`stationKey`); it comes from the connection, so every per-station map is
+// bounded (`rememberFor`) however many ids show up.
 
 import type { Resolved } from './intent-catalog'
 
@@ -25,6 +29,7 @@ export interface Turn {
   heard: string
   origin: TurnOrigin
   spoken: null | string // what the speaker said aloud; null for a silent turn
+  station: string // `stationKey` of the speaker that heard it
 }
 
 export type RepeatTarget = 'answer' | 'any' | 'command'
@@ -34,21 +39,36 @@ const RING_SIZE = 8
 export const REPEAT_TTL_MS = 10 * 60_000
 export const ANAPHORA_TTL_MS = 3 * 60_000
 
-const turns: Turn[] = []
+// A home has a handful of speakers.
+export const MAX_STATIONS = 32
+
+const rings = new Map<string, Turn[]>()
+
+/** The key of a station in every per-station memory: its device id in lower case; '' for a caller that has none (the corpus runner). */
+export function stationKey (deviceId: string | undefined): string {
+  return deviceId?.trim().toLowerCase() ?? ''
+}
+
+/** Stores `value` for `station` in a per-station map; beyond MAX_STATIONS the station stored longest ago is forgotten. */
+export function rememberFor<T> (memory: Map<string, T>, station: string, value: T): void {
+  memory.delete(station)
+  memory.set(station, value)
+  const oldest = memory.keys().next().value
+  if (memory.size > MAX_STATIONS && oldest !== undefined) memory.delete(oldest)
+}
 
 export function recordTurn (turn: Turn): void {
-  turns.push(turn)
-  if (turns.length > RING_SIZE) turns.shift()
+  rememberFor(rings, turn.station, [...rings.get(turn.station) ?? [], turn].slice(-RING_SIZE))
 }
 
 export function resetTurns (): void {
-  turns.length = 0
+  rings.clear()
 }
 
 // The speaker's owner talks to it by voice; TextInput turns are also what an agent or the dashboard injects.
 // A voice turn therefore wins, and a text turn is only used when no voice turn is recent enough.
-function newestFirst (now: number): Turn[] {
-  return turns.filter(turn => now - turn.at <= REPEAT_TTL_MS).reverse()
+function newestFirst (station: string, now: number): Turn[] {
+  return (rings.get(station) ?? []).filter(turn => now - turn.at <= REPEAT_TTL_MS).reverse()
 }
 
 function matches (turn: Turn, want: RepeatTarget): boolean {
@@ -57,14 +77,14 @@ function matches (turn: Turn, want: RepeatTarget): boolean {
   return turn.spoken !== null || turn.action !== null
 }
 
-export function latestTurn (want: RepeatTarget, now = Date.now()): null | Turn {
-  const recent = newestFirst(now)
+export function latestTurn (want: RepeatTarget, station: string, now = Date.now()): null | Turn {
+  const recent = newestFirst(station, now)
   return recent.find(turn => turn.origin === 'voice' && matches(turn, want)) ?? recent.find(turn => matches(turn, want)) ?? null
 }
 
 // The last executed command, for anaphora («а на кухне?»): shorter memory than a repeat.
-export function latestAction (now = Date.now()): ActionRecord | null {
-  const recent = turns.filter(turn => now - turn.at <= ANAPHORA_TTL_MS).reverse()
+export function latestAction (station: string, now = Date.now()): ActionRecord | null {
+  const recent = (rings.get(station) ?? []).filter(turn => now - turn.at <= ANAPHORA_TTL_MS).reverse()
   return (recent.find(turn => turn.origin === 'voice' && turn.action !== null) ?? recent.find(turn => turn.action !== null))?.action ?? null
 }
 

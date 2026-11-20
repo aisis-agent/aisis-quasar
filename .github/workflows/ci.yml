@@ -27,3 +27,5 @@ jobs:
         run: node_modules/.bin/tsx src/backend/check_fuzzy_bounds.mts
       - name: Ogg/Opus codec bounds and stitched duration (exits 1 on any failure)
         run: node_modules/.bin/tsx src/codecs/check_codecs.mts
+      - name: Safety checks (negation, per-station state)
+        run: node_modules/.bin/tsx src/backend/corpus/run_safety.mts
