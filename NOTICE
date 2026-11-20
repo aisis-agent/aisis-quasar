@@ -1,0 +1,10 @@
+aisis-quasar
+Copyright (c) the aisis-quasar contributors (see git history).
+
+This repository is a fork of v3rt3p/quasar-server (https://github.com/v3rt3p/quasar-server),
+Copyright (c) Egor Koleda (radioegor146) and the quasar-server contributors, licensed under the
+GNU General Public License version 3 (see LICENSE). Modifications made in this fork
+(every commit after upstream commit fefcd58) are licensed under the same GNU GPL v3.
+
+The upstream package.json declares "MIT" while the repository's LICENSE file is the GPL-3.0 text;
+this fork treats the GPL-3.0 LICENSE file as governing.
