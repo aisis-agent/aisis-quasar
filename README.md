@@ -24,6 +24,7 @@ server instead of Yandex's cloud, and AISIS answers what it hears.
 | Room of the speaker that heard a phrase, spotter clips | `src/backend/speaker-room.ts`, `src/routers/uniproxy/spotter-clips.ts` |
 | Weather questions answered by weather-cli, not the HA weather entity | `src/backend/entity-index.ts` |
 | Volume 0 (mute) through directives | `src/routers/alice/base-provider.ts` |
+| Who may connect: address admission for the HTTP and WebSocket surface, loopback bind | `src/admission.ts`, `src/main.ts`, `src/routers/uniproxy.alice.yandex.net.ts` |
 | Russian intent corpus and runners (offline routing tests) | `src/backend/corpus/` |
 
 Home Assistant access is configured at run time, never in the image build: pass `-e AISIS_HA_URL=… -e AISIS_HA_TOKEN=…`, or mount
@@ -34,6 +35,25 @@ where mDNS resolves; in the container use an address or a DNS name.
 No credentials are stored in this repository (checked with gitleaks over the whole patch series). Two things in it name a home:
 `src/environment.ts` still defaults the STT and TTS URLs (`STT_GIGAAM_URL`, `TTS_OPENAI_BASE_URL`) to the upstream author's LAN
 host, so set both explicitly; and a comment in `src/backend/speaker-room.ts` names two Station device ids.
+
+## Who may connect
+
+Upstream answers every client that can reach its port. On a shared LAN that means anyone can open `/uni.ws` with any `x-uprx-device-id` and run text turns through
+the Home Assistant fast-intent layer, ask `GET /quasar.yandex.net/glagol/token?device_id=…` for a control token for any device, or read every speaker's private key
+from `GET /quasar.yandex.net/glagol/device_list`. `src/admission.ts` decides per request, from the address the request really came from:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `BIND_HOST` | `127.0.0.1` | interface of the HTTP/WebSocket server (the function-state server stays on loopback whatever this says). The AISIS stack reaches a colour through an nginx switch on the same host; a container that publishes ports needs `0.0.0.0` |
+| `AISIS_ALLOWED_CLIENTS` | none | comma separated IPs and CIDR ranges admitted besides loopback (the TLS front the speakers connect through). Unset: nobody |
+| `AISIS_EDGE_TOKEN` | unset | when set, every non-loopback client must also send it as `x-aisis-edge-token` |
+| `AISIS_ADMISSION` | `enforce` | `log` refuses nothing and logs what enforcement would refuse (a rollout aid) |
+
+The client is the `X-Real-IP` of a loopback peer (a reverse proxy on the same host must set it from the address it accepted: nginx `proxy_set_header X-Real-IP $remote_addr;`
+replaces a client-sent copy) or the peer itself on a direct connection; headers of a non-loopback peer are never believed. This host is always admitted. A WebSocket from
+anyone else must also name a station already in the database (the WebSocket's `x-uprx-device-id`, an HTTP request's `device_id` query parameter: the routes that take one create the station on first sight), so a text turn cannot provision and impersonate a device: provision a new speaker from this host with
+`GET http://127.0.0.1:<PORT>/quasar.yandex.net/get_sync_info?device_id=<id>&platform=<platform>`. A refusal is HTTP 403, logged once a minute per reason.
+Check: `node_modules/.bin/tsx src/routers/check_admission.mts` (the policy on fake requests, the router and the middleware with real clients, the wiring in `main.ts`).
 
 ## Branches and tags
 
@@ -60,10 +80,14 @@ Same as upstream: the `Dockerfile` installs with pnpm and runs `pnpm start` (`ts
 
 ```sh
 git clone --recurse-submodules https://github.com/alex-mextner/aisis-quasar
-git -C aisis-quasar checkout aisis-volume-zero-e859a37b
-docker build -t aisis-quasar:from-source aisis-quasar
+git -C aisis-quasar archive aisis-volume-zero-e859a37b | docker build -t aisis-quasar:from-source -
 docker run --rm -e AISIS_HA_URL -e AISIS_HA_TOKEN aisis-quasar:from-source   # plus the ports, Postgres and keys quasar-server needs
 ```
+
+`git archive` packs the tracked files of the tag only, so nothing untracked in your working tree (a local `.env.local`, a `ha.config.json` holding a Home
+Assistant token) can end up in the image. Do not check a historical tag out and `docker build` the directory: the `.dockerignore` of the tags up to
+`aisis-volume-zero-e859a37b` excludes only a top-level `ha.config.json`, not `.env.local` or a nested `ha.config.json` (`COPY . .` in the `Dockerfile` copies
+whatever is left); the exclusions `**/ha.config.json` and `**/.env.local` come with the `aisis` branch. `docker build .` on the branch head is safe.
 
 AISIS builds its production images from a checkout of a tag of this repository
 (see `services/yandex-station/README.md` in the AISIS repository for the blue/green deploy and the
@@ -75,7 +99,7 @@ node_modules/.bin/tsx src/backend/corpus/run_corpus.mts    # exits 1 unless ever
 node_modules/.bin/tsx src/backend/corpus/run_dialogs.mts   # multi-turn dialogs, exits 1 on any failure
 ```
 
-CI runs both.
+CI runs both and the admission check.
 
 ## Contributing
 

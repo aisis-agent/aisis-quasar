@@ -8,6 +8,7 @@ import express from 'express'
 import { OpenAI } from 'openai'
 import z from 'zod'
 
+import { admissionMiddleware, knownStationIds, parseAdmissionPolicy } from './admission'
 import { BufferedAudioMetadataBackend } from './backend/audio-metadata/buffered'
 import { BasicMusicBackend } from './backend/music/basic'
 import { StubMusicBackend } from './backend/music/stub'
@@ -66,6 +67,12 @@ storage.initialize().catch(error => logger.fatal(error))
 
 const app = express()
 
+// A colour is reached through the blue/green switch on the same host, so it listens on loopback only (BIND_HOST=0.0.0.0
+// restores upstream's behaviour for a container that publishes ports). Admission (src/admission.ts) is the first
+// middleware: nothing below it (body parsing, the glagol token and device-list routes) runs for a refused client.
+const bindHost = process.env.BIND_HOST ?? '127.0.0.1'
+app.use(admissionMiddleware(parseAdmissionPolicy(), async () => await knownStationIds(storage)))
+
 // fuck Yandex
 app.use('/quasar.yandex.net/glagol/check_token', (request, _response, next) => {
   request.headers['content-type'] = 'text/yandex-token'
@@ -98,7 +105,7 @@ registerStartupMobileYandexNetRouter(app)
 registerScbhYandexNetRouter(app)
 registerRpcAliceYandexNetRouter(app)
 
-const server = app.listen(environment.PORT, error => {
+const server = app.listen(environment.PORT, bindHost, error => {
   if (error) {
     logger.error(`Quasar failed to start on :${environment.PORT}: ${error}`)
     return
@@ -627,7 +634,8 @@ functionStateServer.post('/functions', async ({ body }) => {
 })
 
 try {
-  functionStateServer.listen(environment.FUNCTION_STATE_SERVER_PORT, () => {
+  // Never wider than loopback, whatever BIND_HOST says: this server has no admission of its own.
+  functionStateServer.listen({ hostname: '127.0.0.1', port: environment.FUNCTION_STATE_SERVER_PORT }, () => {
     logger.info(`Started function-state-server on :${environment.FUNCTION_STATE_SERVER_PORT}`)
   })
 } catch (error) {
