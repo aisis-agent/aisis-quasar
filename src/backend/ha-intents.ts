@@ -23,7 +23,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { getLogger } from '../logger'
 import { encodeProtobufStruct } from '../protobuf'
 import proto from '../protos/protos'
-import { allowCorrection, confirmationQuestion, describeCorrection, eligible, endsMidPhrase, noteAsked, requestCorrection, shadowOnly } from './asr-correct'
+import { allowCorrection, confirmationQuestion, describeCorrection, eligible, endsMidPhrase, forgetAsked, noteAsked, requestCorrection, shadowOnly } from './asr-correct'
 import { parseEndDialog } from './end-dialog'
 import { matchEntityQuery } from './entity-index'
 import { composeNumeral, editDistance, NUMBER_WORDS, normalize, parseNumbers, splitSentences, tokenize } from './fuzzy-ru'
@@ -31,10 +31,11 @@ import { grammarRoute } from './grammar-hook'
 import { decideCatalog, DeviceIntent, isNarrativeVerbForm, LIGHT_WORDS, OFF_VERBS, ON_VERBS, parseUtterance, Resolved, Room, Utterance, VolumeIntent, World } from './intent-catalog'
 import { tryMediaControl, tryMusicIntent } from './music-intents'
 import { type MediaAction, parseMediaControl } from './music-parse'
+import { hasNegation, isNegatedAt } from './negation'
 import { shadowClassify } from './semantic-shadow'
 import { DEFAULT_VOLUME_STEP_PCT, doneText, failureText, findSetting, getSettings, getValue, matchSettingQuery, postValue, queryAnswer, refreshSettings, volumeLevels, volumeStepPct } from './settings-voice'
 import { speakerArea } from './speaker-room'
-import { ActionRecord, latestAction, latestTurn, parseRepeat, recordTurn, RepeatTarget, Turn, TurnOrigin } from './turn-memory'
+import { ActionRecord, latestAction, latestTurn, parseRepeat, recordTurn, rememberFor, RepeatTarget, stationKey, Turn, TurnOrigin } from './turn-memory'
 
 export type FastIntentResult =
   | { kind: 'llm', text: string } // route this (rewritten) text to the LLM brain
@@ -92,6 +93,7 @@ interface TurnTrace {
   executed: ActionRecord | null
   phrase: string
   skipRecording: boolean
+  station: string // `stationKey` of the speaker whose turn this is: the open question and the turn memory are theirs alone
 }
 const turnTrace = new AsyncLocalStorage<TurnTrace>()
 
@@ -326,7 +328,9 @@ const JUNK_LIGHT = /(k1se|snapmaker|cavity)/i
 let haConfig: null | { token: string, url: string } = null
 let configLoaded = false
 let registry: HaRegistry | null = null
-let pendingClarification: PendingClarification | null = null
+// One open question per station: a «да» answers the question the speaker that says it was asked, never another speaker's. The map
+// is bounded (turn-memory.ts): station ids come from connections.
+const pendingClarifications = new Map<string, PendingClarification>()
 let ambiguityMemory: null | Record<string, 'home' | 'llm'> = null
 
 const REGISTRY_TTL_MS = 60_000
@@ -336,7 +340,21 @@ const REPROMPT_TEXT = 'Повтори?'
 const REPROMPT_LOOP_MS = 60_000
 // «ничего», «хватит», «спасибо»: the dialog ends, nothing is said, nothing is played.
 const DIALOG_END: FastIntentResult = { kind: 'reply', quasarDirectives: [], text: null }
-let lastRepromptAt = 0
+const lastReprompts = new Map<string, number>()
+
+// The station whose turn is running (matchFastIntent puts it into the turn's trace); '' outside a turn.
+function currentStation (): string {
+  return turnTrace.getStore()?.station ?? ''
+}
+
+function getPending (): PendingClarification | null {
+  return pendingClarifications.get(currentStation()) ?? null
+}
+
+function setPending (pending: PendingClarification | null): void {
+  if (pending === null) pendingClarifications.delete(currentStation())
+  else rememberFor(pendingClarifications, currentStation(), pending)
+}
 
 function getConfig (): null | { token: string, url: string } {
   if (process.env.AISIS_HA_URL && process.env.AISIS_HA_TOKEN) {
@@ -890,8 +908,8 @@ function volumeResult (volume: VolumeIntent, speakerLevel: null | number, stepPc
 // the voice layer had to correct) asks first; the dashboard refuses an unconfirmed voice change as well.
 async function executeSetting (setting: Extract<Resolved, { type: 'setting' }>): Promise<FastIntentResult> {
   if (setting.ask !== undefined && setting.confirmed !== true) {
-    pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm', phrase: setting.id,
-      remember: false, resolved: setting }
+    setPending({ declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm', phrase: setting.id,
+      remember: false, resolved: setting })
     return { kind: 'reply', listen: true, quasarDirectives: [], text: setting.ask }
   }
   const result = await postValue(setting.id, setting.value, { confirmed: setting.confirmed === true })
@@ -934,12 +952,15 @@ async function executeResolved (config: { token: string, url: string }, resolved
 const YES_WORDS = ['да', 'конечно', 'точно', 'правильно', 'угу', 'ага', 'верно', 'давай', 'ок', 'окей', 'валяй', 'делай', 'именно']
 const NO_WORDS = ['нет', 'не', 'неа', 'другое', 'отмена', 'отмени', 'стоп']
 
+// What the owner's answer picks. A choice word under a negator («не свет, а музыку») is not the choice, and a yes word beside a
+// negation or a «нет» («не делай», «не давай», «нет, давай») is not a «да»: the question stays unanswered, never run on a misread.
 function resolveClarification (tokens: string[]): 'home' | 'llm' | 'yes' | 'no' | null {
-  if (tokens.some(token => ['свет', 'света', 'свету', 'лампа', 'лампу'].includes(token))) return 'home'
-  if (tokens.some(token => token.startsWith('музык'))) return 'llm'
-  if (tokens.some(token => YES_WORDS.includes(token))) return 'yes'
-  if (tokens.some(token => NO_WORDS.includes(token))) return 'no'
-  return null
+  const picked = (isChoice: (token: string) => boolean): boolean => tokens.some((token, index) => isChoice(token) && !isNegatedAt(tokens, index))
+  if (picked(token => ['свет', 'света', 'свету', 'лампа', 'лампу'].includes(token))) return 'home'
+  if (picked(token => token.startsWith('музык'))) return 'llm'
+  const refused = hasNegation(tokens) || tokens.some(token => NO_WORDS.includes(token))
+  if (!refused && tokens.some(token => YES_WORDS.includes(token))) return 'yes'
+  return refused ? 'no' : null
 }
 
 // ── Decision: exact layer → catalog → LLM ────────────────────────────────────
@@ -1012,7 +1033,22 @@ export function decideFastIntent (rawText: string, reg: HaRegistry, defaultArea:
 // word was the room). Ask again rather than act on the part that survived.
 function decideSentence (rawText: string, reg: HaRegistry, defaultArea: string): FastDecision {
   const decision = decideSentenceUncut(rawText, reg, defaultArea)
-  return decision.tier === 'execute' && endsMidPhrase(tokenize(normalize(rawText))) ? { reason: 'cut-off', tier: 'reprompt' } : decision
+  const words = tokenize(normalize(rawText))
+  if (hasNegation(words) && actsOnHome(decision)) return { tier: 'llm' }
+  return decision.tier === 'execute' && endsMidPhrase(words) ? { reason: 'cut-off', tier: 'reprompt' } : decision
+}
+
+// «не включай чайник», «лучше не включай», «кондиционер не включай» forbid what the verb and the noun name, and the grammar reads only
+// those two: left alone it runs the action. A negated phrase is therefore no match for everything that would act (run, confirm,
+// ask to fill in or to repeat); answers, state and setting reads and entity questions only talk and stay.
+function actsOnHome (decision: FastDecision): boolean {
+  switch (decision.tier) {
+    case 'execute': return decision.resolved.type !== 'setting-query'
+    case 'confirm': return decision.resolved.type !== 'say'
+    case 'clarify':
+    case 'reprompt': return true
+    default: return false
+  }
 }
 
 function decideSentenceUncut (rawText: string, reg: HaRegistry, defaultArea: string): FastDecision {
@@ -1106,8 +1142,9 @@ function roomOfSpeaker (reg: HaRegistry, deviceId: string | undefined): string {
 // Middle band («confirm»): a device action is offered back («Включи свет», верно?») and only a «да» runs it, because
 // a lost first syllable cannot tell «включи» from «выключи». Anything else stays as the fast layer decided.
 async function correctionFor (text: string, tier: FastDecision['tier'], options: MatchOptions, reg: HaRegistry): Promise<FastIntentResult | null> {
-  if (options.noCorrect === true || !eligible(text, tier) || !allowCorrection()) return null
-  const correction = await requestCorrection(text)
+  // A repair can only turn a negated phrase into its opposite («не включай» heard as «включай»): leave it alone.
+  if (options.noCorrect === true || hasNegation(tokenize(normalize(text))) || !eligible(text, tier) || !allowCorrection()) return null
+  const correction = await requestCorrection(text, currentStation())
   if (correction === null) return null
   const mode = shadowOnly() ? 'ignore' : correction.mode
   logger.info(describeCorrection(text, correction, mode))
@@ -1116,8 +1153,8 @@ async function correctionFor (text: string, tier: FastDecision['tier'], options:
     const heard = decideFastIntent(correction.text, reg, roomOfSpeaker(reg, options.deviceId))
     const question = confirmationQuestion(correction.text)
     if (heard.tier !== 'execute' || question === null) return null
-    pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
-      phrase: normalize(text), resolved: heard.resolved }
+    setPending({ declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
+      phrase: normalize(text), resolved: heard.resolved })
     return { kind: 'reply', listen: true, quasarDirectives: [], text: question }
   }
   const rerun = await matchFastIntent(correction.text, { ...options, noCorrect: true })
@@ -1137,21 +1174,23 @@ function repeatQuestion (resolved: Resolved): null | string {
 // «повтори»: say the last answer again; after a silent command run it again (or ask when that is not safe).
 // While a question is still pending the repeat is the question itself.
 async function repeatLast (config: { token: string, url: string }, want: RepeatTarget, speakerLevel: null | number): Promise<FastIntentResult | null> {
-  if (pendingClarification !== null && Date.now() < pendingClarification.expiresAt) {
-    const question = latestTurn('answer')
+  const station = currentStation()
+  const pending = getPending()
+  if (pending !== null && Date.now() < pending.expiresAt) {
+    const question = latestTurn('answer', station)
     if (question?.asked === true) {
-      pendingClarification.expiresAt = Date.now() + AMBIGUITY_TTL_MS
+      pending.expiresAt = Date.now() + AMBIGUITY_TTL_MS
       return { kind: 'reply', listen: true, quasarDirectives: [], text: question.spoken }
     }
   }
-  const turn = latestTurn(want)
+  const turn = latestTurn(want, station)
   if (turn === null) return null
   if (want !== 'command' && turn.spoken !== null) return { kind: 'reply', listen: turn.asked, quasarDirectives: [], text: turn.spoken }
   if (turn.action === null) return null
   const question = repeatQuestion(turn.action.resolved)
   if (question === null) return await executeResolved(config, turn.action.resolved, speakerLevel)
-  pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
-    phrase: turn.action.phrase, remember: false, resolved: turn.action.resolved }
+  setPending({ declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
+    phrase: turn.action.phrase, remember: false, resolved: turn.action.resolved })
   return { kind: 'reply', listen: true, quasarDirectives: [], text: question }
 }
 
@@ -1167,13 +1206,15 @@ function isRoomWord (token: string): boolean {
 // «Включи свет в гостиной» … «а на кухне?»: the previous device command aimed at the room just named.
 // Null unless the phrase is nothing but such a room follow-up and a command ran in the last minutes.
 function followUpPhrase (tokens: string[]): null | string {
-  const prior = latestAction()
+  const prior = latestAction(currentStation())
   if (prior === null || prior.resolved.type !== 'device' || !FOLLOW_UP_OPENERS.includes(tokens[0] ?? '')) return null
   const words = tokens.filter(token => token !== 'алиса' && !FOLLOW_UP_FILLERS.includes(token))
   if (words.length === 0 || words.length > 4 || !words.every(token => ROOM_PREPOSITIONS.includes(token) || isRoomWord(token))) return null
   if (!words.some(isRoomWord)) return null
   const kept: string[] = []
-  for (const token of tokenize(prior.phrase).filter(word => word !== 'алиса')) {
+  // The sentence that ran, not the chatter after it («Включи свет в гостиной. Не знаю.»): a negated one would make the follow-up refuse.
+  const ran = splitSentences(prior.phrase).find(sentence => !hasNegation(tokenize(sentence))) ?? prior.phrase
+  for (const token of tokenize(ran).filter(word => word !== 'алиса')) {
     if (!isRoomWord(token)) {
       kept.push(token)
     } else if (ROOM_PREPOSITIONS.includes(kept[kept.length - 1] ?? '')) {
@@ -1185,11 +1226,11 @@ function followUpPhrase (tokens: string[]): null | string {
 
 export async function matchFastIntent (rawText: string, options: MatchOptions = {}): Promise<FastIntentResult | null> {
   const outer = turnTrace.getStore()
-  const trace: TurnTrace = outer ?? { executed: null, phrase: '', skipRecording: false }
+  const trace: TurnTrace = outer ?? { executed: null, phrase: '', skipRecording: false, station: stationKey(options.deviceId) }
   const result = outer === undefined
     ? await turnTrace.run(trace, async () => await matchFastIntentCore(rawText, options))
     : await matchFastIntentCore(rawText, options)
-  if (result?.kind === 'reply' && result.listen === true && result.text !== null) noteAsked(result.text)
+  if (result?.kind === 'reply' && result.listen === true && result.text !== null) noteAsked(result.text, trace.station)
   if (outer === undefined && !trace.skipRecording && result?.kind === 'reply') {
     const turn: Turn = {
       action: result.text === null ? trace.executed : null,
@@ -1197,7 +1238,8 @@ export async function matchFastIntent (rawText: string, options: MatchOptions = 
       at: Date.now(),
       heard: rawText,
       origin: options.origin ?? 'voice',
-      spoken: result.text
+      spoken: result.text,
+      station: trace.station
     }
     recordTurn(turn)
   }
@@ -1220,7 +1262,8 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     // before the brain. Only the stop class on a fresh turn (no dialog in progress) reaches the music.
     const end = parseEndDialog(text)
     if (end !== null) {
-      pendingClarification = null
+      setPending(null)
+      forgetAsked(currentStation())
       if (end === 'stop' && options.dialogActive !== true) return await runMediaControl(config, 'stop') ?? DIALOG_END
       return DIALOG_END
     }
@@ -1238,17 +1281,20 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     }
 
     // A question is pending: this turn is the answer.
-    if (pendingClarification !== null) {
-      const pending = pendingClarification
-      pendingClarification = null
+    const pending = getPending()
+    if (pending !== null) {
+      setPending(null)
       if (trace !== undefined && pending.mode !== 'fill') trace.phrase = pending.phrase
       if (Date.now() < pending.expiresAt) {
         const answer = resolveClarification(tokens)
         if (pending.mode === 'fill') {
           // «Какую громкость поставить?» → «семь»; «Громкость или яркость?» → «громкость».
-          const filled = pending.fill?.(parseUtterance(s, ROOMS, [])) ?? null
+          const filled = answer === 'no' || hasNegation(tokens) ? null : pending.fill?.(parseUtterance(s, ROOMS, [])) ?? null
           if (filled !== null) return await executeResolved(config, filled, speakerLevel)
-          if (answer === 'no') return DIALOG_END
+          if (answer === 'no') {
+            forgetAsked(currentStation())
+            return DIALOG_END
+          }
         } else if (pending.mode === 'home-or-music') {
           if (answer === 'home') {
             rememberAmbiguity(pending.phrase, 'home')
@@ -1267,7 +1313,10 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
             return await executeResolved(config, confirmed.type === 'setting' ? { ...confirmed, confirmed: true } : confirmed, speakerLevel)
           }
           if (answer === 'no') {
-            return pending.declineToBrain
+            // An explicit refusal («не делай») cancels; sending the phrase on to the brain is for «нет, я про другое». Either way the
+            // refused question is no context for what is said next.
+            forgetAsked(currentStation())
+            return pending.declineToBrain && !hasNegation(tokens)
               ? { kind: 'llm', text: pending.phrase }
               : DIALOG_END
           }
@@ -1299,7 +1348,8 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
       } else if (grammar.route === 'silent') {
         grammarResult = DIALOG_END
       } else if (grammar.route === 'dialog_end') {
-        pendingClarification = null
+        setPending(null)
+        forgetAsked(currentStation())
         grammarResult = DIALOG_END
       } else if (grammar.route === 'volume' && grammar.volume !== null) {
         const asked = grammar.volume
@@ -1381,12 +1431,12 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     const area = roomOfSpeaker(reg, options.deviceId)
     const decision = decideFastIntent(text, reg, area)
     if (decision.tier !== 'llm') logger.info(`Fast intent room for '${s}': ${area} (station ${options.deviceId ?? 'unknown'})`)
-    if (decision.tier !== 'reprompt') lastRepromptAt = 0
+    if (decision.tier !== 'reprompt') lastReprompts.delete(currentStation())
     logger.debug(`Fast intent decision '${s}': ${decision.tier} ${'trace' in decision ? decision.trace ?? '' : ''}`)
 
     // Gray zone / reprompt: a repaired phrase goes through the same tiers instead of asking or staying unclear.
     // A silenced reprompt (noise loop) is not worth a model call.
-    if (decision.tier !== 'llm' && !(decision.tier === 'reprompt' && Date.now() - lastRepromptAt < REPROMPT_LOOP_MS)) {
+    if (decision.tier !== 'llm' && !(decision.tier === 'reprompt' && Date.now() - (lastReprompts.get(currentStation()) ?? 0) < REPROMPT_LOOP_MS)) {
       const repaired = await correctionFor(text, decision.tier, options, reg)
       if (repaired !== null) return repaired
     }
@@ -1427,8 +1477,8 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
         else shadowClassify(text, null, 'catalog')
         // A phrase the owner already confirmed once runs directly («выучено»).
         if (decision.resolved.type !== 'setting' && loadAmbiguityMemory()[s] === 'home') return await executeResolved(config, decision.resolved, speakerLevel)
-        pendingClarification = { declineToBrain: decision.declineToBrain, expiresAt: Date.now() + AMBIGUITY_TTL_MS,
-          mode: 'confirm', phrase: s, resolved: decision.resolved }
+        setPending({ declineToBrain: decision.declineToBrain, expiresAt: Date.now() + AMBIGUITY_TTL_MS,
+          mode: 'confirm', phrase: s, resolved: decision.resolved })
         return { kind: 'reply', listen: true, quasarDirectives: [], text: decision.question }
       }
       case 'clarify': {
@@ -1441,15 +1491,15 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
         } else {
           shadowClassify(text, null, 'catalog')
         }
-        pendingClarification = { declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, fill: decision.fill,
-          mode: decision.mode, phrase: s, resolved: decision.resolved }
+        setPending({ declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, fill: decision.fill,
+          mode: decision.mode, phrase: s, resolved: decision.resolved })
         return { kind: 'reply', listen: true, quasarDirectives: [], text: decision.question }
       }
       case 'reprompt': {
         // Never a list of guesses. Said once; a second miss right after it stays silent so
         // the station cannot be talked into a «не расслышала» loop by noise.
-        if (Date.now() - lastRepromptAt < REPROMPT_LOOP_MS) return { kind: 'reply', quasarDirectives: [], text: null }
-        lastRepromptAt = Date.now()
+        if (Date.now() - (lastReprompts.get(currentStation()) ?? 0) < REPROMPT_LOOP_MS) return { kind: 'reply', quasarDirectives: [], text: null }
+        rememberFor(lastReprompts, currentStation(), Date.now())
         return { kind: 'reply', listen: true, quasarDirectives: [], text: REPROMPT_TEXT }
       }
     }

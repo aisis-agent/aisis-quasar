@@ -464,3 +464,39 @@
 {"text": "включи освещение в студии", "expect": {"kind": "cmd", "domain": "light"}}
 {"text": "выключи розетку", "expect": {"kind": "cmd", "domain": "socket"}}
 {"text": "включи люстgu", "expect": {"kind": "clarify", "domain": "typo"}}
+{"text": "не включай чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не выключай свет", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не включай свет на кухне", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не включай кондиционер", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не включай люстру", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не включай глобус", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "никогда не включай чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "ни за что не включай чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "лучше не включай чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "чайник не включай пока", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не вздумай включать чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "нельзя включать чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "кондиционер не включай", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "свет не включай", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не делай громче", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не убавляй громкость", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не тише", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "включи не чайник а свет", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не включай свет в гостиной а включи на кухне", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "Алиса, не включай свет", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не надо включать свет", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "что не включено", "expect": {"kind": "query", "domain": "negation", "tier": "query"}}
+{"text": "Включи свет на кухне. Не знаю.", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "Не включай чайник. Включи свет на кухне.", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "не мог бы ты включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "не можешь включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "нельзя ли включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "я не мог включить свет на кухне", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не мог бы ты не включать чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "не могу включить свет на кухне", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "чтобы не включать чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "я не могла бы включить свет на кухне", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "я знаю что ты не можешь включить чайник", "expect": {"kind": "llm", "domain": "negation", "tier": "llm"}}
+{"text": "Алиса, не мог бы ты включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "Алиса, ты не могла бы включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}
+{"text": "не мог бы включить свет на кухне", "expect": {"kind": "cmd", "domain": "negation", "tier": "execute", "action": "on:light.kukhnia_svetilnik"}}

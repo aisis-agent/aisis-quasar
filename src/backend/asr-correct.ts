@@ -7,6 +7,7 @@
 // execute/answer/query/math decisions are not eligible, so they pay no latency. Neither is the clarify tier («Громкость.»):
 // that question is asked at once, and waiting ~850 ms for a corrector that times out only delayed it.
 import { getLogger } from '../logger'
+import { rememberFor } from './turn-memory'
 
 const logger = getLogger()
 
@@ -35,16 +36,23 @@ export interface Correction {
   text: string
 }
 
-let lastAsked: null | { at: number, text: string } = null
+// What each station was last asked: the next phrase of THAT station may be its answer; another speaker's «давай» is not.
+const lastAsked = new Map<string, { at: number, text: string }>()
 
-/** The speaker asked the owner something (confirm / clarify / «не расслышала»): the next phrase may be its answer. */
-export function noteAsked (text: string, now = Date.now()): void {
-  lastAsked = { at: now, text }
+/** The speaker `station` asked the owner something (confirm / clarify / «не расслышала»): its next phrase may be the answer. */
+export function noteAsked (text: string, station: string, now = Date.now()): void {
+  rememberFor(lastAsked, station, { at: now, text })
 }
 
-export function recentTurns (now = Date.now()): Array<{ role: 'assistant' | 'user', text: string }> {
-  if (lastAsked === null || now - lastAsked.at > SPOKEN_CONTEXT_MS) return []
-  return [{ role: 'assistant' as const, text: lastAsked.text }].slice(-MAX_CONTEXT_TURNS)
+/** The owner dismissed the question of `station` («ничего», «хватит»): what is said next is not its answer. */
+export function forgetAsked (station: string): void {
+  lastAsked.delete(station)
+}
+
+export function recentTurns (station: string, now = Date.now()): Array<{ role: 'assistant' | 'user', text: string }> {
+  const asked = lastAsked.get(station)
+  if (asked === undefined || now - asked.at > SPOKEN_CONTEXT_MS) return []
+  return [{ role: 'assistant' as const, text: asked.text }].slice(-MAX_CONTEXT_TURNS)
 }
 
 // «Алиса, громкость 5»: the wake word opens the phrase and is neither a word of the command nor a reason to skip it.
@@ -89,11 +97,11 @@ export function shadowOnly (): boolean {
 }
 
 /** null on any failure (timeout, adapter down, bad reply): the caller then behaves exactly as without correction. */
-export async function requestCorrection (text: string, fetchImpl: typeof fetch = fetch): Promise<Correction | null> {
+export async function requestCorrection (text: string, station: string, fetchImpl: typeof fetch = fetch): Promise<Correction | null> {
   const started = Date.now()
   try {
     const response = await fetchImpl(ADAPTER_ASR_URL, {
-      body: JSON.stringify({ recent: recentTurns(), source: 'quasar', text }),
+      body: JSON.stringify({ recent: recentTurns(station), source: 'quasar', text }),
       headers: { 'Content-Type': 'application/json' },
       method: 'POST',
       signal: AbortSignal.timeout(TIMEOUT_MS)
