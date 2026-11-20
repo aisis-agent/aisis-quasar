@@ -21,3 +21,5 @@ jobs:
         run: node_modules/.bin/tsx src/backend/corpus/run_corpus.mts
       - name: Multi-turn dialogs
         run: node_modules/.bin/tsx src/backend/corpus/run_dialogs.mts
+      - name: Admission policy and wiring (exits 1 on any failure)
+        run: node_modules/.bin/tsx src/routers/check_admission.mts
