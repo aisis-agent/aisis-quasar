@@ -90,7 +90,7 @@ export function registerMobileproxyPassportYandexNetRouter (app: Application): v
         uid: 10_146_228
       }],
       master_uid: 1_234_567_228,
-      native_default_email: 'yandexowner@yandex.ru',
+      native_default_email: 'owner@example.com',
       normalized_display_login: 'YandexStationOwnerNo146',
       partitions: ['default'],
       plus_card: true,

@@ -72,9 +72,9 @@ for (const [name, end, code] of [
   ['close(1001, going away)', (c: WebSocket) => { c.close(1001, 'going away') }, 1001],
   ['close() with no status', (c: WebSocket) => { c.close() }, 1005]
 ] as const) {
-  const line = await endConnection('M00ZRW3008RAJG', end)
+  const line = await endConnection('TESTDEVICE0001', end)
   check(`${name}: INFO, not WARN`, line?.level === 'info', line)
-  check(`${name}: text`, line?.message.startsWith(`UniProxy WebSocket closed (normal): code=${code} device=M00ZRW3008RAJG `) === true, line)
+  check(`${name}: text`, line?.message.startsWith(`UniProxy WebSocket closed (normal): code=${code} device=TESTDEVICE0001 `) === true, line)
   check(`${name}: carries the connection age`, /age=\d+ms$/.test(line?.message ?? ''), line)
 }
 const goingAway = closes().find(record => record.message.includes('code=1001'))

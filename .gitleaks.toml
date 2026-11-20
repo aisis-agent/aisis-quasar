@@ -1,0 +1,9 @@
+title = "aisis-quasar"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "mock passport response: public OAuth client ids of the Yandex mobile apps, not credentials"
+targetRules = ["generic-api-key"]
+paths = ['''src/routers/mobileproxy\.passport\.yandex\.net\.ts''']
