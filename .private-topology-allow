@@ -1,0 +1,2 @@
+# Byte-pinned by SHA-256 in the aisis overlay builder (quasar-admission); the only match is a property access (`decision.local`), not a host name.
+src/admission.ts

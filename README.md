@@ -32,9 +32,8 @@ a config file at the absolute path the code reads, `-v "$PWD/ha.config.json:/src
 `ha.config.json` is gitignored and excluded from the Docker build context). Without either the layer is disabled. Use a `.local` name only
 where mDNS resolves; in the container use an address or a DNS name.
 
-No credentials are stored in this repository (checked with gitleaks over the whole patch series). Two things in it name a home:
-`src/environment.ts` still defaults the STT and TTS URLs (`STT_GIGAAM_URL`, `TTS_OPENAI_BASE_URL`) to the upstream author's LAN
-host, so set both explicitly; and a comment in `src/backend/speaker-room.ts` names two Station device ids.
+No credentials are stored in this repository (checked with gitleaks over the whole patch series). The STT and TTS URLs
+(`STT_GIGAAM_URL`, `TTS_OPENAI_BASE_URL`) default to `localhost`; point them at your own speech services.
 
 ## Who may connect
 
@@ -107,3 +106,7 @@ CI runs all three, the admission check and the resource-bound checks.
 
 Issues and pull requests are welcome. Keep changes small; behaviour of the fast-intent layer must keep the corpus
 runner green. Changes that belong to the emulator itself are better sent to upstream first.
+
+## Private-topology check
+
+CI runs `scripts/check_private_topology.py` (plus gitleaks) on every pull request to keep private addresses, host names, MAC addresses and e-mails out of tracked files; use placeholders such as `<server-lan-ip>` or `<tailnet-host>` instead. To also catch your own machine names locally, list one regular expression per line in `~/.config/private-topology/denylist.txt` (never committed) and run the script before pushing.

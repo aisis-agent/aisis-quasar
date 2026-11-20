@@ -1,4 +1,4 @@
 {
-  "url": "http://homeassistant.local:8123",
+  "url": "http://ha.example.com:8123",
   "token": "<Home Assistant long-lived access token>"
 }

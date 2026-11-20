@@ -1,7 +1,7 @@
 // Which room a speaker stands in, read from Home Assistant instead of guessed.
 //
 // Every station owns media_player entities in HA whose ids end in the station's device id in lower case
-// (media_player.aisis_speaker_m00zrw3008rajg, media_player.yandex_station_m10dst310hxnpk), and the owner puts them in
+// (media_player.aisis_speaker_<device-id>, media_player.yandex_station_<device-id>), and the owner puts them in
 // an HA area (Студия, Спальня, Гостиная). That area is the room a phrase without a room is about: «включи свет» said
 // to the Studio speaker means the studio. The registry the fast intents already fetch carries the area of every entity,
 // so there is no second source of truth and no per-station config to keep in step.

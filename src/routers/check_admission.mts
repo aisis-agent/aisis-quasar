@@ -54,7 +54,7 @@ function fakeRequest (peer: string, headers: Record<string, string> = {}): Incom
 }
 const verdict = (env: Record<string, string>, peer: string, headers?: Record<string, string>): string => {
   const result = admission.admit(admission.parseAdmissionPolicy(env), fakeRequest(peer, headers))
-  return result.ok ? (result.local === true ? 'local' : `admitted ${result.client}`) : 'refused'
+  return result.ok ? (result.local === true ? 'local' : `admitted ${result.client}`) : 'refused' // topology-ok: property access, not a host name
 }
 
 // ── The address rules ────────────────────────────────────────────────────────────────────────────────────────────────
