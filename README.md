@@ -67,7 +67,8 @@ Each tag marks the source of a production image of the AISIS stack:
 | `aisis-restore-20261107` | `aisis-quasar:restore-20261107` | + intent corpus, fillers, semantic shadow |
 | `aisis-pre-weather-20261117` | `aisis-quasar:volume-zero-predeploy-standby-*` (`77d5109e0e43`) | grammar hook, speaker room, settings, music, TV apps (the stack before the weather change) |
 | `aisis-bg-weather-via-cli-20261117` | `aisis-quasar:bg-weather-via-cli-20261117` | + weather via weather-cli |
-| `aisis-volume-zero-e859a37b` | `aisis-quasar:volume-zero-e859a37b` | + volume 0 (current production image) |
+| `aisis-volume-zero-e859a37b` | `aisis-quasar:volume-zero-e859a37b` | + volume 0 |
+| `aisis-bg-admission-safety-20261120` | `aisis-quasar:bg-admission-safety-20261120` | + admission (loopback + voice front only), resource bounds, negation and per-station state, close-code logging, observed-outcome wording (current production image) |
 
 The early commits were recovered from the images because the working tree was never committed
 (alex-mextner/aisis#108); their author dates are the image build dates. `src/` at each tag is byte-identical to `/src` of the

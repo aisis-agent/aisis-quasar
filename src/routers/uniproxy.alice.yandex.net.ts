@@ -7,8 +7,28 @@ import { UniProxyConnection, UniProxyConnectionParameters } from './uniproxy/uni
 
 const logger = getLogger()
 
+// The peer ended the connection itself: 1000 normal closure, 1001 going away, 1005 closed with no status code.
+// The speaker closes a connection after every exchange and every wake word (its spotter-log socket half a second
+// after it opens) and the deploy checks close theirs, so those are not warnings: the dashboard flags every WARN
+// that falls into a dialog. Anything else (1006: the link dropped without a close frame; 1002, 1003, 1007, 1008,
+// 1009, 1011: protocol, payload or server trouble) still is.
+const NORMAL_CLOSE_CODES = new Set([1000, 1001, 1005])
+
 interface UniProxyRouter {
   connections: Map<string, Set<UniProxyConnection>>
+}
+
+export function closeLogLine (code: number, reason: Buffer, deviceId: string,
+  ageMs: number): { level: 'info' | 'warn', message: string } {
+  const normal = NORMAL_CLOSE_CODES.has(code)
+  // The device id is a request header and the reason is peer text: neither goes into the log as it came.
+  const device = deviceId.replaceAll(/[^\w.-]/g, '?').slice(0, 40)
+  const why = reason.length > 0 ? ` reason=${JSON.stringify(reason.toString('utf8').slice(0, 80))}` : ''
+  return {
+    level: normal ? 'info' : 'warn',
+    message: `UniProxy WebSocket closed${normal ? ' (normal)' : ' abnormally'}: code=${code} device=${device}${why} ` +
+      `age=${ageMs}ms`
+  }
 }
 
 export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnectionParameters,
@@ -67,9 +87,11 @@ export function registerUniproxyAliceYandexNetRouter (parameters: UniProxyConnec
     }
 
     const connection = new UniProxyConnection(websocket, deviceId, platform, parameters)
-    websocket.on('close', () => {
+    const openedAt = Date.now()
+    websocket.on('close', (code, reason) => {
       set.delete(connection)
-      logger.warn('UniProxy WebSocket closed')
+      const line = closeLogLine(code, reason, deviceId, Date.now() - openedAt)
+      logger[line.level](line.message)
     })
     websocket.on('error', error => {
       set.delete(connection)

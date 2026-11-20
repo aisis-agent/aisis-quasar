@@ -61,29 +61,86 @@ interface HaRegistry {
   stale?: boolean
 }
 
-// Thrown when a service call was accepted into the ha-cli queue because HA is
-// restarting. etaSeconds is ha-cli's measured typical recovery time (X-Aisis-Eta:
-// median of real HA down->up windows), undefined if the header is missing.
-class HaRestartingError extends Error {
-  constructor (message: string, readonly etaSeconds: number | undefined) {
+// Thrown when ha-cli OBSERVED Home Assistant gone (HTTP 202) and queued the call. `down` is the evidence ha-cli saw
+// (X-Aisis-Down: refused|reset|dns|unreachable|starting|http_502|http_503|http_504), undefined when an older ha-cli queued the
+// call on a timeout. etaSeconds (X-Aisis-Eta) is only logged: whether Home Assistant is "restarting" is not something anyone observed.
+class HaQueuedError extends Error {
+  constructor (message: string, readonly etaSeconds: number | undefined, readonly down: string | undefined) {
     super(message)
   }
 }
 
-function restartingError (response: Response): HaRestartingError {
+function restartingError (response: Response): HaQueuedError {
   const eta = Number(response.headers.get('x-aisis-eta'))
-  return new HaRestartingError('ha-cli queued the call', Number.isFinite(eta) && eta > 0 ? eta : undefined)
+  return new HaQueuedError('ha-cli queued the call', Number.isFinite(eta) && eta > 0 ? eta : undefined,
+    response.headers.get('x-aisis-down') ?? undefined)
 }
 
-function secondsWord (n: number): string {
-  if (n % 10 === 1 && n % 100 !== 11) return 'секунду'
-  if (n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)) return 'секунды'
-  return 'секунд'
+export function haRecoveryText (down: string | undefined): string {
+  if (down === 'starting') return 'Home Assistant запускается, команду выполню, когда он вернётся.'
+  if (down !== undefined) return 'Home Assistant недоступен, команду выполню, когда он вернётся.'
+  return 'Не получилось проверить ответ Home Assistant, команда ждёт в очереди.'
 }
 
-export function haRecoveryText (etaSeconds: number | undefined): string {
-  if (etaSeconds === undefined) return 'Умный дом перезагружается, скоро всё придёт в норму.'
-  return `Умный дом перезагружается, обычно примерно через ${etaSeconds} ${secondsWord(etaSeconds)} всё придёт в норму.`
+// A service call whose outcome ha-cli checked against the device state and did not confirm. `say` is what the speaker says:
+// only what was observed (X-Aisis-Verify: failed = the device did not do it; unknown = nothing could be read).
+class HaCommandError extends Error {
+  constructor (message: string, readonly say: string) {
+    super(message)
+  }
+}
+
+// Nothing was observed of a command that was sent but not answered in time (or whose read-back timed out).
+const HA_NOT_ANSWERED = 'Home Assistant не ответил вовремя, результат команды не проверен.'
+
+function isTimeout (error: unknown): boolean {
+  return error instanceof Error && error.name === 'TimeoutError'
+}
+
+// A body read cut off by the fetch timeout rejects with AbortError, not TimeoutError; only used where no one else aborts.
+function isTimeoutOrBodyAbort (error: unknown): boolean {
+  return isTimeout(error) || (error instanceof Error && error.name === 'AbortError')
+}
+
+// A service call that did not get an answer in time (haFetch gives up): nothing was observed. Only the call itself is judged so:
+// a read that timed out before any command was sent keeps the generic failure text.
+async function haServiceFetch (config: { token: string, url: string }, path: string, body: unknown): Promise<Response> {
+  try {
+    return await haFetch(config, path, body)
+  } catch (error) {
+    if (isTimeout(error)) throw new HaCommandError(`HA ${path} timed out`, HA_NOT_ANSWERED)
+    throw error
+  }
+}
+
+// The layer's own read-back AFTER a command was sent and ha-cli did not confirm it (an older ha-cli, no X-Aisis-Verify: ok): a
+// read that times out here leaves the command's outcome unknown, so it is not the generic failure of a read before any command.
+async function readBackAfterCommand (readBack: () => Promise<boolean>): Promise<boolean> {
+  try {
+    return await readBack()
+  } catch (error) {
+    if (isTimeoutOrBodyAbort(error)) throw new HaCommandError('read-back after the command timed out', HA_NOT_ANSWERED)
+    throw error
+  }
+}
+
+// ha-cli read the device back after this call and it was in the state the call leads to (X-Aisis-Verify: ok).
+function confirmedByHaCli (response: Response): boolean {
+  return response.headers.get('x-aisis-verify') === 'ok'
+}
+
+function haFailure (response: Response, what: string): Error {
+  const verify = response.headers.get('x-aisis-verify')
+  const reason = response.headers.get('x-aisis-verify-reason')
+  if (verify === 'failed') {
+    return new HaCommandError(`${what} not confirmed: ${reason ?? 'no reason'}`, reason === 'device_unavailable'
+      ? 'Home Assistant видит это устройство недоступным.'
+      : 'Команду отправил, но не вижу, чтобы устройство её выполнило.')
+  }
+  if (verify === 'unknown') {
+    return new HaCommandError(`${what} unverified: ${reason ?? 'no reason'}`, 'Не получилось проверить ответ Home Assistant.')
+  }
+  return new Error(`${what} -> ${response.status}`)
 }
 
 // What the current matchFastIntent call has executed and which phrase it answers: filled by executeResolved,
@@ -464,7 +521,7 @@ function mentionedRoomAreas (s: string): string[] {
 }
 
 async function callService (config: { token: string, url: string }, entityId: string,
-  turnOn: boolean): Promise<void> {
+  turnOn: boolean): Promise<boolean> {
   const domain = entityId.split('.')[0]
   let path = `/api/services/${domain}/${turnOn ? 'turn_on' : 'turn_off'}`
   let body: Record<string, unknown> = { entity_id: entityId }
@@ -473,25 +530,20 @@ async function callService (config: { token: string, url: string }, entityId: st
     path = '/api/services/climate/set_hvac_mode'
     body = { entity_id: entityId, hvac_mode: turnOn ? 'cool' : 'off' }
   }
-  const response = await haFetch(config, path, body)
-  if (response.status === 202) {
-    // Accepted into the ha-cli delayed queue: HA is restarting.
-    throw restartingError(response)
-  }
-  if (!response.ok) {
-    throw new Error(`HA ${path} ${entityId} -> ${response.status}`)
-  }
+  const response = await haServiceFetch(config, path, body)
+  if (response.status === 202) throw restartingError(response)
+  if (!response.ok) throw haFailure(response, `HA ${path} ${entityId}`)
+  return confirmedByHaCli(response)
 }
 
 async function callWholeDomain (config: { token: string, url: string },
-  wholeDomain: 'light', turnOn: boolean): Promise<void> {
+  wholeDomain: 'light', turnOn: boolean): Promise<boolean> {
   // Domain-wide HA calls require entity_id "all".
-  const response = await haFetch(config,
+  const response = await haServiceFetch(config,
     `/api/services/${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`, { entity_id: 'all' })
   if (response.status === 202) throw restartingError(response)
-  if (!response.ok) {
-    throw new Error(`HA ${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'} -> ${response.status}`)
-  }
+  if (!response.ok) throw haFailure(response, `HA ${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`)
+  return confirmedByHaCli(response)
 }
 
 async function currentState (config: { token: string, url: string }, entityId: string): Promise<string | undefined> {
@@ -508,7 +560,7 @@ async function currentEntity (config: { token: string, url: string }, entityId: 
 }
 
 // «яркость 50» / «кондиционер на 24»: absolute set-points, not on/off.
-async function callSetService (config: { token: string, url: string }, entityId: string, device: DeviceIntent): Promise<void> {
+async function callSetService (config: { token: string, url: string }, entityId: string, device: DeviceIntent): Promise<boolean> {
   const domain = entityId.split('.')[0]
   let path = '/api/services/light/turn_on'
   let body: Record<string, unknown> = { entity_id: entityId, brightness_pct: device.brightnessPct }
@@ -518,9 +570,10 @@ async function callSetService (config: { token: string, url: string }, entityId:
     // A powered-off IR AC ignores a set-point; an explicit mode starts it (as for «включи»).
     if ((await currentEntity(config, entityId))?.state === 'off') body.hvac_mode = 'cool'
   }
-  const response = await haFetch(config, path, body)
+  const response = await haServiceFetch(config, path, body)
   if (response.status === 202) throw restartingError(response)
-  if (!response.ok) throw new Error(`HA ${path} ${entityId} -> ${response.status}`)
+  if (!response.ok) throw haFailure(response, `HA ${path} ${entityId}`)
+  return confirmedByHaCli(response)
 }
 
 function setSatisfied (entity: HaEntity | undefined, device: DeviceIntent): boolean {
@@ -841,15 +894,18 @@ async function executeDeviceIntent (config: { token: string, url: string }, devi
   }
 
   const turnOn = device.kind !== 'off'
+  let confirmed: boolean[]
   if (device.kind === 'set') {
-    await Promise.all(device.targets.map(entityId => callSetService(config, entityId, device)))
+    confirmed = await Promise.all(device.targets.map(entityId => callSetService(config, entityId, device)))
   } else if (device.wholeDomain) {
-    await callWholeDomain(config, device.wholeDomain, turnOn)
+    confirmed = [await callWholeDomain(config, device.wholeDomain, turnOn)]
   } else {
-    await Promise.all(device.targets.map(entityId => callService(config, entityId, turnOn)))
+    confirmed = await Promise.all(device.targets.map(entityId => callService(config, entityId, turnOn)))
   }
 
-  if (await verifyExecution(config, device)) {
+  // ha-cli already read every device back (X-Aisis-Verify: ok on each call): a second look from here would only add the stale
+  // cached reads of a Home Assistant that went away in between, and report a failure nobody observed.
+  if (confirmed.every(Boolean) || await readBackAfterCommand(() => verifyExecution(config, device))) {
     logger.info(`Fast intent executed: ${device.kind} [${device.targets.join(', ') || device.wholeDomain}]`)
     return { kind: 'reply', quasarDirectives: earconDirectives(turnOn ? 'on' : 'off'), text: null }
   }
@@ -1389,9 +1445,9 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     if (tvApp !== null) {
       const outcome = await executeTvAppIntent(tvApp, {
         callScript: async entityId => {
-          const response = await haFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
+          const response = await haServiceFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
           if (response.status === 202) throw restartingError(response)
-          if (!response.ok) throw new Error('TV application launch was not accepted')
+          if (!response.ok) throw haFailure(response, 'TV application launch')
         },
         readNative: async () => await currentEntity(config, 'media_player.televizor')
       })
@@ -1406,9 +1462,9 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     if (fireplace !== null) {
       const outcome = await executeFireplaceIntent(fireplace, {
         callScript: async entityId => {
-          const response = await haFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
+          const response = await haServiceFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
           if (response.status === 202) throw restartingError(response)
-          if (!response.ok) throw new Error('Projector fireplace launch was not accepted')
+          if (!response.ok) throw haFailure(response, 'Projector fireplace launch')
         },
         readNative: async () => await currentEntity(config, 'media_player.home'),
         readReadiness: async () => await currentEntity(config, 'sensor.living_room_fireplace')
@@ -1504,11 +1560,12 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
       }
     }
   } catch (error) {
-    if (error instanceof HaRestartingError) {
-      logger.warn(`Fast intent '${s}' queued: Home Assistant is restarting (eta ${error.etaSeconds ?? '?'}s)`)
-      return { kind: 'reply', quasarDirectives: [], text: haRecoveryText(error.etaSeconds) }
+    if (error instanceof HaQueuedError) {
+      logger.warn(`Fast intent '${s}' queued: Home Assistant unavailable (${error.down ?? 'no evidence'}, eta ${error.etaSeconds ?? '?'}s)`)
+      return { kind: 'reply', quasarDirectives: [], text: haRecoveryText(error.down) }
     }
     logger.error(`Fast intent '${s}' failed:`, error)
+    if (error instanceof HaCommandError) return { kind: 'reply', quasarDirectives: [], text: error.say }
     return { kind: 'reply', quasarDirectives: [], text: 'Не удалось выполнить команду умного дома.' }
   }
 }
