@@ -1,6 +1,6 @@
 {
   "name": "@v3rt3p/quasar-server",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "Quasar Server emulator",
   "main": "src/main.ts",
   "author": "radioegor146",

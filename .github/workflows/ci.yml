@@ -23,3 +23,7 @@ jobs:
         run: node_modules/.bin/tsx src/backend/corpus/run_dialogs.mts
       - name: Admission policy and wiring (exits 1 on any failure)
         run: node_modules/.bin/tsx src/routers/check_admission.mts
+      - name: Fuzzy matching resource bounds (exits 1 on any failure)
+        run: node_modules/.bin/tsx src/backend/check_fuzzy_bounds.mts
+      - name: Ogg/Opus codec bounds and stitched duration (exits 1 on any failure)
+        run: node_modules/.bin/tsx src/codecs/check_codecs.mts

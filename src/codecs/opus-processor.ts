@@ -11,6 +11,8 @@ interface OpusHead {
   sampleRate: number;
 }
 
+const MAX_PACKET_BYTES = 1024 * 1024
+
 export class OpusProcessor {
   private pageBytes: Buffer = Buffer.alloc(0)
   private encoder: null | OpusEncoder = null
@@ -20,6 +22,8 @@ export class OpusProcessor {
   private nextSequence: number | null = null
   private synthesizedHead = false
   private streamPeak = 0
+  // Set when a packet outgrew the limit: the stream is broken and a peer that keeps sending must not keep a buffer alive.
+  private failed = false
   private streamSquares = 0
   private streamSamples = 0
 
@@ -27,6 +31,7 @@ export class OpusProcessor {
     private readonly onSampleRate: (sampleRate: number) => Promise<void>) {}
 
   async handleAudioData (audioData: Buffer): Promise<void> {
+    if (this.failed) throw new Error('Opus stream closed after an oversized packet')
     // UniProxy transport messages do not define Ogg page boundaries. Retain
     // only an incomplete page; completed pages keep the existing packet path.
     if (audioData.length > 1024 * 1024) throw new Error('Ogg transport frame exceeds voice input limit')
@@ -60,6 +65,13 @@ export class OpusProcessor {
     if (this.packetSegments.length > 0) console.warn('[opus-processor] incomplete Opus packet at native EOF, discarding')
   }
 
+  private fail (): void {
+    this.failed = true
+    this.packetSegments = []
+    this.packetBytes = 0
+    this.pageBytes = Buffer.alloc(0)
+  }
+
   private async handleOpusPage (page: OggPage): Promise<void> {
     if (this.serial !== null && page.streamSerialNumber !== this.serial) {
       console.warn('[opus-processor] stream serial change: expected', this.serial, 'got', page.streamSerialNumber, '- resyncing')
@@ -82,9 +94,14 @@ export class OpusProcessor {
     // below255 (including zero) terminates the packet; it can span pages.
     // Decode completed packets, never individual255-byte page segments.
     for (const segment of page.segments) {
-      this.packetSegments.push(segment)
+      // A copy: a segment is a view into the whole transport frame (up to 1 MiB), and a packet that never
+      // terminates would pin one frame per 255 bytes it collects.
+      this.packetSegments.push(Buffer.from(segment))
       this.packetBytes += segment.length
-      if (this.packetBytes > 1024 * 1024) throw new Error('Ogg packet exceeds voice input limit')
+      if (this.packetBytes > MAX_PACKET_BYTES) {
+        this.fail()
+        throw new Error('Ogg packet exceeds voice input limit')
+      }
       if (segment.length === 255) continue
       const packet = Buffer.concat(this.packetSegments, this.packetBytes)
       this.packetSegments = []
