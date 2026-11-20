@@ -75,11 +75,13 @@ export class OggOpusStreamStitcher {
     const audioPages = pages.slice(headerPagesToSkip)
     if (audioPages.length === 0) throw new Error('Ogg segment has no audio pages')
 
+    // A page's granule is the number of 48 kHz samples the decoder has produced up to its END. A later segment
+    // is decoded in full (only the stream's first pre-skip is dropped), so its granules lie on the running total
+    // as they are: the first audio page counts too, and so does the pre-roll of a segment whose first pages end
+    // below its pre-skip. The total is the sum of the segments' final granules.
     if (this.serial === null) {
       this.serial = pages[0].streamSerialNumber
     }
-    // Granule offset: first audio page's granule maps onto the running total.
-    const baseGranule = audioPages[0].absoluteGranulePosition
     const out: Buffer[] = []
     for (let index = 0; index < audioPages.length; index++) {
       const page = audioPages[index]
@@ -88,12 +90,12 @@ export class OggOpusStreamStitcher {
       // A packet must not span segment boundaries: the first kept page of a
       // later segment must not claim a continued packet.
       const continued = isFirstOutputPage ? false : page.flags.continuedPacket
-      const granule = this.granule + (page.absoluteGranulePosition - baseGranule)
+      const granule = this.granule + page.absoluteGranulePosition
       out.push(buildPage(this.serial, this.nextSequence++, granule,
         continued, isFirstOutputPage, isLastOutputPage, page.segments))
       this.wroteAnyPage = true
     }
-    this.granule += (audioPages[audioPages.length - 1].absoluteGranulePosition - baseGranule)
+    this.granule += audioPages[audioPages.length - 1].absoluteGranulePosition
     return Buffer.concat(out)
   }
 }

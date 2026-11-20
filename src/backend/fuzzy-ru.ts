@@ -23,18 +23,39 @@ export const NUMBER_WORDS: Record<string, number> = {
   восемьсот: 800, девятьсот: 900, тысяча: 1000, тысячи: 1000, тысяч: 1000
 }
 
+// A heard or typed phrase is attacker-sized text: one 1M-letter «word» made every vocabulary comparison
+// O(length) in time and memory (51 s and 2 GB of the one process serving every speaker), and every sentence is a
+// full routing pass of its own (3.5 ms each). No command, Russian word or number approaches these bounds, so a
+// text over any of them is no command at all: normalize returns '' and every router that starts from it (the exact
+// layer, the catalog, entity and music queries) finds nothing, instead of acting on a cut-down remainder (a numeral
+// cut short is another number, a cut-off «… на» no longer ends the phrase).
+export const MAX_TOKEN_LENGTH = 64
+export const MAX_TOKENS = 200
+export const MAX_SENTENCES = 16
+export const MAX_TEXT_CHARS = 2000
+
 export function normalize (text: string): string {
-  return text.toLowerCase()
+  // A run of punctuation is one short «word» to tokenize yet makes the trailing-dot cleanup of the calculator quadratic
+  // (60k dots: 2.5 s), so the whole text is bounded too, before any work is done on it.
+  if (text.length > MAX_TEXT_CHARS) return ''
+  if (text.trim().split(/(?<=[.!?…])\s+/).length > MAX_SENTENCES) return ''
+  const normalized = text.toLowerCase()
     .replaceAll('ё', 'е')
     .replace(/[^a-zа-я0-9\s+\-*/.,×÷]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+  // The words the routers will see (tokenize also splits «пожалуйста,пожалуйста»), not the space-separated chunks.
+  const words = tokenize(normalized)
+  return words.length > MAX_TOKENS || words.some(word => word.length > MAX_TOKEN_LENGTH) ? '' : normalized
 }
 
 // ASR punctuates: «Кромкость 10.  Смотри, вот.» is two sentences. A dot inside a
-// number («22.5») is not followed by whitespace and stays.
+// number («22.5») is not followed by whitespace and stays. A text over any bound is no command (see normalize):
+// none of its sentences is routed, not even the first ones.
 export function splitSentences (raw: string): string[] {
-  return raw.split(/(?<=[.!?…])\s+/).map(part => part.trim()).filter(part => part !== '')
+  if (raw.length > MAX_TEXT_CHARS) return []
+  const sentences = raw.split(/(?<=[.!?…])\s+/).map(part => part.trim()).filter(part => part !== '')
+  return sentences.length > MAX_SENTENCES || normalize(raw) === '' ? [] : sentences
 }
 
 // Words of a normalized string. Sentence punctuation glued to a word («10.»,
@@ -44,28 +65,32 @@ export function tokenize (normalized: string): string[] {
 }
 
 // Optimal-string-alignment distance: Levenshtein where one adjacent swap
-// («гормкость») costs 1 — the commonest ASR/typo slip.
+// («гормкость») costs 1 — the commonest ASR/typo slip. Three rolling rows, not a full matrix. A string
+// longer than MAX_TOKEN_LENGTH is no word: «far apart», its own length, instead of an O(n·m) table.
 export function editDistance (a: string, b: string): number {
   if (a === b) return 0
   if (a.length === 0) return b.length
   if (b.length === 0) return a.length
-  const rows: number[][] = Array.from({ length: a.length + 1 }, (_, i) => {
-    const row = new Array<number>(b.length + 1).fill(0)
-    row[0] = i
-    return row
-  })
-  for (let j = 0; j <= b.length; j++) rows[0][j] = j
+  if (a.length > MAX_TOKEN_LENGTH || b.length > MAX_TOKEN_LENGTH) return Math.max(a.length, b.length)
+  let beforePrevious: number[] = new Array<number>(b.length + 1).fill(0)
+  let previous: number[] = Array.from({ length: b.length + 1 }, (_, j) => j)
+  let current: number[] = new Array<number>(b.length + 1).fill(0)
   for (let i = 1; i <= a.length; i++) {
+    current[0] = i
     for (let j = 1; j <= b.length; j++) {
       const cost = a[i - 1] === b[j - 1] ? 0 : 1
-      let best = Math.min(rows[i - 1][j] + 1, rows[i][j - 1] + 1, rows[i - 1][j - 1] + cost)
+      let best = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost)
       if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
-        best = Math.min(best, rows[i - 2][j - 2] + 1)
+        best = Math.min(best, beforePrevious[j - 2] + 1)
       }
-      rows[i][j] = best
+      current[j] = best
     }
+    const recycled = beforePrevious
+    beforePrevious = previous
+    previous = current
+    current = recycled
   }
-  return rows[a.length][b.length]
+  return previous[b.length]
 }
 
 // Phonetic key for Russian: unstressed-vowel reduction and final devoicing, the
