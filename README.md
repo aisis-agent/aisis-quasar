@@ -27,10 +27,10 @@ server instead of Yandex's cloud, and AISIS answers what it hears.
 | Who may connect: address admission for the HTTP and WebSocket surface, loopback bind | `src/admission.ts`, `src/main.ts`, `src/routers/uniproxy.alice.yandex.net.ts` |
 | Russian intent corpus and runners (offline routing tests) | `src/backend/corpus/` |
 
-Home Assistant access is configured at run time, never in the image build: pass `-e AISIS_HA_URL=… -e AISIS_HA_TOKEN=…`, or mount
-a config file at the absolute path the code reads, `-v "$PWD/ha.config.json:/src/ha.config.json:ro"` (copy `ha.config.example.json`; any
-`ha.config.json` is gitignored and excluded from the Docker build context). Without either the layer is disabled. Use a `.local` name only
-where mDNS resolves; in the container use an address or a DNS name.
+Home Assistant access is the connection store the AISIS dashboard writes (Connect page): a JSON file mounted read-only at
+`/run/aisis-ha/connection.json` (`-v /path/to/aisis-ha:/run/aisis-ha:ro`; `AISIS_HA_STORE` overrides the path). It holds the current
+address and either an OAuth refresh token or a long-lived token; the dashboard rewrites it (atomic rename) when Home Assistant changes its
+address and the layer re-reads it on the next call. Without a readable store the layer is disabled. Details: `src/backend/ha-connection.ts`.
 
 No credentials are stored in this repository (checked with gitleaks over the whole patch series). Two things in it name a home:
 `src/environment.ts` still defaults the STT and TTS URLs (`STT_GIGAAM_URL`, `TTS_OPENAI_BASE_URL`) to the upstream author's LAN
@@ -82,7 +82,7 @@ Same as upstream: the `Dockerfile` installs with pnpm and runs `pnpm start` (`ts
 ```sh
 git clone --recurse-submodules https://github.com/alex-mextner/aisis-quasar
 git -C aisis-quasar archive aisis-volume-zero-e859a37b | docker build -t aisis-quasar:from-source -
-docker run --rm -e AISIS_HA_URL -e AISIS_HA_TOKEN aisis-quasar:from-source   # plus the ports, Postgres and keys quasar-server needs
+docker run --rm -v /path/to/aisis-ha:/run/aisis-ha:ro aisis-quasar:from-source   # plus the ports, Postgres and keys quasar-server needs
 ```
 
 `git archive` packs the tracked files of the tag only, so nothing untracked in your working tree (a local `.env.local`, a `ha.config.json` holding a Home

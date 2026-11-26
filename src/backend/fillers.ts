@@ -6,7 +6,7 @@
 // Which phrase fits is decided per turn, never on the answer's critical path:
 //   math    → «Считаю»      instant calc; spoken only if the answer is >LATE_FILLER_MS late
 //   state   → «Проверяю»    smart-home state read
-//   ha_down → «Умный дом просыпается…»  state read while ha-cli reports Home Assistant down
+//   ha_down → «Умный дом просыпается…»  state read while Home Assistant does not answer
 //   llm     → «Думаю/Минутку»  open question for the brain
 //   music   → «Секунду, ищу»   catalog search; spoken only if >LATE_FILLER_MS late
 // Fast on/off commands get no filler. Laya (via the adapter /laya endpoint) may refine
@@ -16,6 +16,7 @@
 import { readFileSync, statSync } from 'node:fs'
 import { getLogger } from '../logger'
 import { parseEndDialog } from './end-dialog'
+import { haBaseUrl } from './ha-connection'
 import { parseMusicIntent } from './music-parse'
 import { DOMAIN_QUESTION } from './semantic-shadow'
 
@@ -126,23 +127,32 @@ async function layaPlan (rawText: string): Promise<FillerPlan | null> {
   }
 }
 
-function pollHaHealth (): void {
-  const base = process.env.AISIS_HA_URL
-  if (base === undefined || base === '') return
-  fetch(`${base.replace(/\/$/, '')}/health`, { signal: AbortSignal.timeout(2000) })
-    .then(async res => {
-      const data = res.ok ? await res.json() as { ha_up?: boolean } : {}
-      haDown = data.ha_up === false
-    })
-    .catch(() => { /* ha-cli itself unreachable: not a Home Assistant verdict */ })
+/**
+ * Home Assistant answers GET /auth/providers (no credentials) whenever it is up: any status below 500 within 2 s is «up»;
+ * a refused/unreachable connection, a timeout or a 5xx is «down». Without a connection store the layer is disabled and there is
+ * nothing to be down. Exported for the checks; production starts it once through classifyForFiller.
+ */
+export async function pollHaHealth (): Promise<void> {
+  const base = haBaseUrl()
+  if (base === null) {
+    haDown = false
+    return
+  }
+  try {
+    const res = await fetch(`${base}/auth/providers`, { signal: AbortSignal.timeout(2000) })
+    await res.body?.cancel()
+    haDown = res.status >= 500
+  } catch {
+    haDown = true
+  }
 }
 
-// ha-cli /health is polled in the background so classification never waits for it.
+// Home Assistant's health is polled in the background so classification never waits for it.
 function ensureHaHealthPoll (): void {
   if (haPollStarted) return
   haPollStarted = true
-  pollHaHealth()
-  setInterval(pollHaHealth, HA_HEALTH_POLL_MS).unref()
+  void pollHaHealth()
+  setInterval(() => void pollHaHealth(), HA_HEALTH_POLL_MS).unref()
 }
 
 /** Rules first; laya may refine state vs llm within its budget; HA-down swaps «Проверяю». */
@@ -253,4 +263,5 @@ export function resetFillerState (): void {
   audioCache.clear()
   index = null
   haDown = false
+  haPollStarted = false
 }

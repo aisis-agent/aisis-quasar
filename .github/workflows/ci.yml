@@ -31,5 +31,5 @@ jobs:
         run: node_modules/.bin/tsx src/backend/corpus/run_safety.mts
       - name: UniProxy close-code logging (exits 1 on any failure)
         run: node_modules/.bin/tsx src/routers/check_close_logging.mts
-      - name: HA verify wording (exits 1 on any failure)
-        run: node_modules/.bin/tsx src/backend/check_ha_verify_wording.mts
+      - name: Direct Home Assistant connection - OAuth, address change, wording, health poll (exits 1 on any failure)
+        run: node_modules/.bin/tsx src/backend/check_ha_direct.mts
