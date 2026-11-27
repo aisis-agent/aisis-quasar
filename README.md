@@ -55,6 +55,13 @@ anyone else must also name a station already in the database (the WebSocket's `x
 `GET http://127.0.0.1:<PORT>/quasar.yandex.net/get_sync_info?device_id=<id>&platform=<platform>`. A refusal is HTTP 403, logged once a minute per reason.
 Check: `node_modules/.bin/tsx src/routers/check_admission.mts` (the policy on fake requests, the router and the middleware with real clients, the wiring in `main.ts`).
 
+## Which speaker a turn belongs to
+
+The AISIS gateway and Home Assistant know a speaker by its device id (the WebSocket's `x-uprx-device-id`). The STT client sends it as the `x-aisis-station` header of every
+WebSocket it opens to the gateway (as the spotter clips do), and the `Dialog <id> started` / `Dialog <id> ended: <reason>` log lines end with ` station=<id>`; the gateway
+uses both to scope its TV auto-pause to the room of the speaker that was activated and to release only that room's pause when that speaker's dialog ends. An id with characters
+outside `A-Z a-z 0-9 . _ -` (or longer than 64) is not sent and not logged: the gateway then falls back to its single-speaker rule. Check: `node_modules/.bin/tsx src/backend/check_station_id.mts`.
+
 ## Branches and tags
 
 `master` follows upstream; `aisis` is the default branch and carries the patch series.

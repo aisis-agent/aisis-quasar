@@ -44,6 +44,7 @@ export interface VoiceInputHandlerFinishEvent {
 
 export interface VoiceInputHandlerProperties {
   audioMetadata: AudioMetadataBackend
+  stationId: string
   stt: STTBackend
 }
 
@@ -155,7 +156,7 @@ export class VoiceInputHandler extends EventEmitter<VoiceInputHandlerEvents> {
     try {
       [audioMetadataSession, sttSession, requestMetadata] = await Promise.all([
         this.properties.audioMetadata.startCapturing(this.voiceSpan ?? undefined),
-        this.properties.stt.startTranscribing(this.voiceSpan ?? undefined),
+        this.properties.stt.startTranscribing(this.voiceSpan ?? undefined, this.properties.stationId),
         request.metadata
       ])
     } catch (error) {

@@ -6,6 +6,7 @@ import { RawData, WebSocket } from 'ws'
 import { AudioMetadataBackend, ProcessorBackend, STTBackend, TTSBackend } from '../../backend/backend'
 import { startTurnFiller } from '../../backend/fillers'
 import { receiverMediaPhrase } from '../../backend/music-parse'
+import { withStation } from '../../backend/station-id'
 import { REASK_TEXT, shouldReask } from '../../backend/turn-memory'
 import { timezoneOffsetSeconds } from '../../backend/tz-offset'
 import { getLogger } from '../../logger'
@@ -99,7 +100,7 @@ export class UniProxyConnection {
     private readonly platform: string,
     private readonly parameters: UniProxyConnectionParameters) {
     this.spotterClips = new SpotterClipRecorder(deviceId)
-    this.voiceInputHandler = new VoiceInputHandler(parameters)
+    this.voiceInputHandler = new VoiceInputHandler({ audioMetadata: parameters.audioMetadata, stationId: deviceId, stt: parameters.stt })
     this.directiveFunctionProvider = getDirectiveFunctionProvider(platform)
     this.inputHandler = new InputHandler({
       ...parameters,
@@ -267,7 +268,7 @@ export class UniProxyConnection {
     this.dialogSpan?.end()
     this.dialogSpan = undefined
 
-    this.logger.info(`Dialog ${this.dialogId} ended: ${reason}`)
+    this.logger.info(withStation(`Dialog ${this.dialogId} ended: ${reason}`, this.deviceId))
     this.dialogId = null
   }
 
@@ -755,7 +756,7 @@ export class UniProxyConnection {
       parentSpan: null
     })
 
-    this.logger.info(`Dialog ${this.dialogId} started`)
+    this.logger.info(withStation(`Dialog ${this.dialogId} started`, this.deviceId))
     this.reasked = false
   }
 

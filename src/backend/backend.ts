@@ -27,7 +27,7 @@ export interface ProcessorSessionEvents {
 }
 
 export interface STTBackend {
-  startTranscribing(span?: Span): Promise<STTBackendSession>;
+  startTranscribing(span?: Span, stationId?: string): Promise<STTBackendSession>;
 }
 
 export type STTChunkTranscribeCallback = (result: STTChunkTranscribeResult) => void
