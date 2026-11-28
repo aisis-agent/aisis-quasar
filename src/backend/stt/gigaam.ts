@@ -4,6 +4,7 @@ import { WebSocket } from 'ws'
 import { OpusProcessor } from '../../codecs/opus-processor'
 import { getLogger } from '../../logger'
 import { STTBackend, STTBackendSession } from '../backend'
+import { stationIdFor } from '../station-id'
 
 interface GigaAMMessage {
   end_of_utt: boolean;
@@ -114,7 +115,7 @@ class GigaAMSTTSession extends STTBackendSession {
 export class GigaAMSTTBackend implements STTBackend {
   constructor (private readonly endpoint: string) {}
 
-  startTranscribing (parentSpan?: Span): Promise<STTBackendSession> {
+  startTranscribing (parentSpan?: Span, stationId?: string): Promise<STTBackendSession> {
     let span: Span | undefined
     if (parentSpan) {
       span = startInactiveSpan({
@@ -123,19 +124,22 @@ export class GigaAMSTTBackend implements STTBackend {
         parentSpan
       })
     }
-    const webSocket = new WebSocket(this.endpoint, span
-      ? {
-          headers: {
-            ...getTraceData({
-              span: startInactiveSpan({
-                name: 'GigaAM STT transcribing connection',
-                op: 'gigaam-stt-connection',
-                parentSpan: span
-              })
+    const station = stationIdFor(stationId)
+    const webSocket = new WebSocket(this.endpoint, {
+      headers: {
+        ...(span
+          ? getTraceData({
+            span: startInactiveSpan({
+              name: 'GigaAM STT transcribing connection',
+              op: 'gigaam-stt-connection',
+              parentSpan: span
             })
-          }
-        }
-      : {})
+          })
+          : {}),
+        // The speaker of this turn: the gateway scopes the TV pause to its room with it (UB-277).
+        ...(station === undefined ? {} : { 'x-aisis-station': station })
+      }
+    })
     return new Promise((resolve, reject) => {
       let opened = false
       webSocket.on('error', error => {
