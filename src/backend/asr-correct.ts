@@ -49,6 +49,11 @@ export function forgetAsked (station: string): void {
   lastAsked.delete(station)
 }
 
+/** The Home Assistant the speakers talk to changed: no station's last question is the context of what is said next. */
+export function forgetAllAsked (): void {
+  lastAsked.clear()
+}
+
 export function recentTurns (station: string, now = Date.now()): Array<{ role: 'assistant' | 'user', text: string }> {
   const asked = lastAsked.get(station)
   if (asked === undefined || now - asked.at > SPOKEN_CONTEXT_MS) return []

@@ -13,8 +13,8 @@
 // speech (text null + local_audio_file_play); questions and errors are spoken.
 // State queries («что включено») NEVER execute. Instant local math answers without
 // the brain. Confirmations persist in /src/ha.ambiguity.json (a phrase the owner
-// confirmed once is executed directly next time). Config: AISIS_HA_URL/
-// AISIS_HA_TOKEN env or /src/ha.config.json; no config -> layer disabled.
+// confirmed once is executed directly next time). Home Assistant is reached with
+// the connection store the dashboard writes (ha-connection.ts); no store -> layer disabled.
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { executeTvAppIntent, parseTvAppIntent, executeFireplaceIntent, parseFireplaceIntent } from './tv-app-intents'
@@ -23,11 +23,12 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { getLogger } from '../logger'
 import { encodeProtobufStruct } from '../protobuf'
 import proto from '../protos/protos'
-import { allowCorrection, confirmationQuestion, describeCorrection, eligible, endsMidPhrase, forgetAsked, noteAsked, requestCorrection, shadowOnly } from './asr-correct'
+import { allowCorrection, confirmationQuestion, describeCorrection, eligible, endsMidPhrase, forgetAllAsked, forgetAsked, noteAsked, requestCorrection, shadowOnly } from './asr-correct'
 import { parseEndDialog } from './end-dialog'
 import { matchEntityQuery } from './entity-index'
 import { composeNumeral, editDistance, NUMBER_WORDS, normalize, parseNumbers, splitSentences, tokenize } from './fuzzy-ru'
 import { grammarRoute } from './grammar-hook'
+import { haConnected, HaConnectionLostError, haInstanceId, haRequest, HaUnreachableError } from './ha-connection'
 import { decideCatalog, DeviceIntent, isNarrativeVerbForm, LIGHT_WORDS, OFF_VERBS, ON_VERBS, parseUtterance, Resolved, Room, Utterance, VolumeIntent, World } from './intent-catalog'
 import { tryMediaControl, tryMusicIntent } from './music-intents'
 import { type MediaAction, parseMediaControl } from './music-parse'
@@ -35,7 +36,7 @@ import { hasNegation, isNegatedAt } from './negation'
 import { shadowClassify } from './semantic-shadow'
 import { DEFAULT_VOLUME_STEP_PCT, doneText, failureText, findSetting, getSettings, getValue, matchSettingQuery, postValue, queryAnswer, refreshSettings, volumeLevels, volumeStepPct } from './settings-voice'
 import { speakerArea } from './speaker-room'
-import { ActionRecord, latestAction, latestTurn, parseRepeat, recordTurn, rememberFor, RepeatTarget, stationKey, Turn, TurnOrigin } from './turn-memory'
+import { ActionRecord, latestAction, latestTurn, parseRepeat, recordTurn, rememberFor, RepeatTarget, resetTurns, stationKey, Turn, TurnOrigin } from './turn-memory'
 
 export type FastIntentResult =
   | { kind: 'llm', text: string } // route this (rewritten) text to the LLM brain
@@ -56,42 +57,20 @@ interface HaRegistry {
   areaByEntity: Map<string, string>
   entities: Map<string, HaEntity>
   fetchedAt: number
-  // true when the registry came from the ha-cli local cache because Home
-  // Assistant is restarting.
-  stale?: boolean
+  // Which Home Assistant this map belongs to (ha-connection.ts haInstanceId): a map is never used for another one.
+  instance?: null | string
+  // Set when the map is the last one kept through an outage (the refresh failed with `error`): fine for routing a phrase, never for
+  // a live measurement.
+  stale?: { error: unknown }
 }
 
-// Thrown when ha-cli OBSERVED Home Assistant gone (HTTP 202) and queued the call. `down` is the evidence ha-cli saw
-// (X-Aisis-Down: refused|reset|dns|unreachable|starting|http_502|http_503|http_504), undefined when an older ha-cli queued the
-// call on a timeout. etaSeconds (X-Aisis-Eta) is only logged: whether Home Assistant is "restarting" is not something anyone observed.
-class HaQueuedError extends Error {
-  constructor (message: string, readonly etaSeconds: number | undefined, readonly down: string | undefined) {
-    super(message)
-  }
-}
+// The outcome of a command that may have reached Home Assistant is unknown: no answer in time, or the connection broke.
+class HaNoAnswerError extends Error {}
 
-function restartingError (response: Response): HaQueuedError {
-  const eta = Number(response.headers.get('x-aisis-eta'))
-  return new HaQueuedError('ha-cli queued the call', Number.isFinite(eta) && eta > 0 ? eta : undefined,
-    response.headers.get('x-aisis-down') ?? undefined)
-}
-
-export function haRecoveryText (down: string | undefined): string {
-  if (down === 'starting') return 'Home Assistant запускается, команду выполню, когда он вернётся.'
-  if (down !== undefined) return 'Home Assistant недоступен, команду выполню, когда он вернётся.'
-  return 'Не получилось проверить ответ Home Assistant, команда ждёт в очереди.'
-}
-
-// A service call whose outcome ha-cli checked against the device state and did not confirm. `say` is what the speaker says:
-// only what was observed (X-Aisis-Verify: failed = the device did not do it; unknown = nothing could be read).
-class HaCommandError extends Error {
-  constructor (message: string, readonly say: string) {
-    super(message)
-  }
-}
-
-// Nothing was observed of a command that was sent but not answered in time (or whose read-back timed out).
+// Said for HaNoAnswerError: nothing was observed of a command that was sent.
 const HA_NOT_ANSWERED = 'Home Assistant не ответил вовремя, результат команды не проверен.'
+// Said for HaUnreachableError: nothing could connect to Home Assistant (refused, no route, DNS) or it revoked the access.
+const HA_UNREACHABLE = 'Home Assistant недоступен.'
 
 function isTimeout (error: unknown): boolean {
   return error instanceof Error && error.name === 'TimeoutError'
@@ -102,45 +81,34 @@ function isTimeoutOrBodyAbort (error: unknown): boolean {
   return isTimeout(error) || (error instanceof Error && error.name === 'AbortError')
 }
 
-// A service call that did not get an answer in time (haFetch gives up): nothing was observed. Only the call itself is judged so:
-// a read that timed out before any command was sent keeps the generic failure text.
-async function haServiceFetch (config: { token: string, url: string }, path: string, body: unknown): Promise<Response> {
+// A service call that did not get an answer (haFetch gives up, or the connection broke after it was made): the command may have
+// been executed. Only the call itself is judged so: a read that failed before any command was sent keeps the generic failure text.
+async function haServiceFetch (path: string, body: unknown): Promise<Response> {
   try {
-    return await haFetch(config, path, body)
+    return await haFetch(path, body)
   } catch (error) {
-    if (isTimeout(error)) throw new HaCommandError(`HA ${path} timed out`, HA_NOT_ANSWERED)
+    if (isTimeout(error) || error instanceof HaConnectionLostError) throw new HaNoAnswerError(`HA ${path} unanswered: ${String(error)}`)
     throw error
   }
 }
 
-// The layer's own read-back AFTER a command was sent and ha-cli did not confirm it (an older ha-cli, no X-Aisis-Verify: ok): a
-// read that times out here leaves the command's outcome unknown, so it is not the generic failure of a read before any command.
+// A service call that Home Assistant answered with an error status is a failure; anything else is the outcome of haServiceFetch.
+async function haCall (path: string, body: unknown, what: string): Promise<void> {
+  const response = await haServiceFetch(path, body)
+  if (!response.ok) throw new Error(`${what} -> ${response.status}`)
+}
+
+// The layer's own read-back AFTER a command was sent: whatever stops it here (a timeout, a refused or broken connection) leaves the
+// command's outcome unknown, so it is not the generic failure of a read before any command.
 async function readBackAfterCommand (readBack: () => Promise<boolean>): Promise<boolean> {
   try {
     return await readBack()
   } catch (error) {
-    if (isTimeoutOrBodyAbort(error)) throw new HaCommandError('read-back after the command timed out', HA_NOT_ANSWERED)
+    if (isTimeoutOrBodyAbort(error) || error instanceof HaConnectionLostError || error instanceof HaUnreachableError) {
+      throw new HaNoAnswerError(`read-back after the command failed: ${String(error)}`)
+    }
     throw error
   }
-}
-
-// ha-cli read the device back after this call and it was in the state the call leads to (X-Aisis-Verify: ok).
-function confirmedByHaCli (response: Response): boolean {
-  return response.headers.get('x-aisis-verify') === 'ok'
-}
-
-function haFailure (response: Response, what: string): Error {
-  const verify = response.headers.get('x-aisis-verify')
-  const reason = response.headers.get('x-aisis-verify-reason')
-  if (verify === 'failed') {
-    return new HaCommandError(`${what} not confirmed: ${reason ?? 'no reason'}`, reason === 'device_unavailable'
-      ? 'Home Assistant видит это устройство недоступным.'
-      : 'Команду отправил, но не вижу, чтобы устройство её выполнило.')
-  }
-  if (verify === 'unknown') {
-    return new HaCommandError(`${what} unverified: ${reason ?? 'no reason'}`, 'Не получилось проверить ответ Home Assistant.')
-  }
-  return new Error(`${what} -> ${response.status}`)
 }
 
 // What the current matchFastIntent call has executed and which phrase it answers: filled by executeResolved,
@@ -148,6 +116,9 @@ function haFailure (response: Response, what: string): Error {
 // because a text turn from the dashboard or an agent can overlap a voice turn.
 interface TurnTrace {
   executed: ActionRecord | null
+  // The Home Assistant the turn began on (haInstanceId); undefined outside a connected turn. Its requests go to that home only and
+  // it publishes nothing (open question, turn memory) once the dashboard has connected another one.
+  home?: null | string
   phrase: string
   skipRecording: boolean
   station: string // `stationKey` of the speaker whose turn this is: the open question and the turn memory are theirs alone
@@ -382,13 +353,35 @@ const AREA_TEMPLATE = '{% for e in states %}{% set d = device_id(e.entity_id) %}
 
 const JUNK_LIGHT = /(k1se|snapmaker|cavity)/i
 
-let haConfig: null | { token: string, url: string } = null
-let configLoaded = false
 let registry: HaRegistry | null = null
 // One open question per station: a «да» answers the question the speaker that says it was asked, never another speaker's. The map
 // is bounded (turn-memory.ts): station ids come from connections.
 const pendingClarifications = new Map<string, PendingClarification>()
 let ambiguityMemory: null | Record<string, 'home' | 'llm'> = null
+
+// What a turn that was overtaken by a switch of homes says instead of whatever it had worked out for the old one. A command it sent
+// may or may not have been carried out, so it never says «не отправлено».
+const HOME_CHANGED: FastIntentResult = { kind: 'reply', quasarDirectives: [], text: 'Home Assistant переключили, результат команды не проверен. Повтори, если нужно.' }
+
+// Open questions and «повтори» hold entity ids of one home: when the dashboard connects another Home Assistant they would act on
+// whatever those ids are there, so they are dropped at the first turn after the switch. The turn itself is pinned to the home it
+// began on (TurnTrace.home): a turn still running across the switch can neither send its entity ids to the new home nor leave
+// anything behind for it.
+let rememberedHome: null | string = null
+function forgetOtherHome (): void {
+  const home = haInstanceId()
+  const trace = turnTrace.getStore()
+  // Pinned once per turn: a correction that comes back after the switch re-runs the phrase inside the same turn, still on the home
+  // the turn began on.
+  if (trace !== undefined && trace.home === undefined) trace.home = home
+  if (home === rememberedHome) return
+  if (rememberedHome !== null) {
+    pendingClarifications.clear()
+    resetTurns()
+    forgetAllAsked()
+  }
+  rememberedHome = home
+}
 
 const REGISTRY_TTL_MS = 60_000
 const FETCH_TIMEOUT_MS = 3000
@@ -408,28 +401,20 @@ function getPending (): PendingClarification | null {
   return pendingClarifications.get(currentStation()) ?? null
 }
 
+function homeChangedDuringTurn (): boolean {
+  const home = turnTrace.getStore()?.home
+  return home !== undefined && home !== haInstanceId()
+}
+
+// An overtaken turn (the dashboard connected another home meanwhile) changes nothing the new home's turns keep.
 function setPending (pending: PendingClarification | null): void {
+  if (homeChangedDuringTurn()) return
   if (pending === null) pendingClarifications.delete(currentStation())
   else rememberFor(pendingClarifications, currentStation(), pending)
 }
 
-function getConfig (): null | { token: string, url: string } {
-  if (process.env.AISIS_HA_URL && process.env.AISIS_HA_TOKEN) {
-    return { token: process.env.AISIS_HA_TOKEN, url: process.env.AISIS_HA_URL }
-  }
-  if (!configLoaded) {
-    configLoaded = true
-    try {
-      const parsed = JSON.parse(readFileSync('/src/ha.config.json', 'utf8')) as {
-        token?: string, url?: string
-      }
-      haConfig = parsed.token && parsed.url ? { token: parsed.token, url: parsed.url } : null
-    } catch {
-      haConfig = null
-    }
-    logger.info(haConfig ? 'Home Assistant fast intents enabled' : 'Home Assistant fast intents disabled (no config)')
-  }
-  return haConfig
+function forgetAskedOfTurn (): void {
+  if (!homeChangedDuringTurn()) forgetAsked(currentStation())
 }
 
 function loadAmbiguityMemory (): Record<string, 'home' | 'llm'> {
@@ -453,25 +438,15 @@ function rememberAmbiguity (phrase: string, resolution: 'home' | 'llm'): void {
   }
 }
 
-async function haFetch (config: { token: string, url: string }, path: string, body?: unknown): Promise<Response> {
-  return fetch(`${config.url}${path}`, {
-    headers: {
-      authorization: `Bearer ${config.token}`,
-      ...(body === undefined ? {} : { 'content-type': 'application/json' })
-    },
-    method: body === undefined ? 'GET' : 'POST',
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-    signal: AbortSignal.timeout(FETCH_TIMEOUT_MS)
-  })
+async function haFetch (path: string, body?: unknown): Promise<Response> {
+  // One budget for the whole call: token refresh, a retry at a new address and the request itself.
+  return await haRequest(path, body, AbortSignal.timeout(FETCH_TIMEOUT_MS), turnTrace.getStore()?.home)
 }
 
-async function getRegistry (config: { token: string, url: string }, forceRefresh = false): Promise<HaRegistry> {
-  if (!forceRefresh && registry !== null && Date.now() - registry.fetchedAt < REGISTRY_TTL_MS) {
-    return registry
-  }
+async function fetchRegistry (instance: null | string): Promise<HaRegistry> {
   const [statesResponse, areasResponse] = await Promise.all([
-    haFetch(config, '/api/states'),
-    haFetch(config, '/api/template', { template: AREA_TEMPLATE })
+    haFetch('/api/states'),
+    haFetch('/api/template', { template: AREA_TEMPLATE })
   ])
   if (!statesResponse.ok || !areasResponse.ok) {
     throw new Error(`HA registry fetch failed: ${statesResponse.status}/${areasResponse.status}`)
@@ -487,9 +462,33 @@ async function getRegistry (config: { token: string, url: string }, forceRefresh
       areaByEntity.set(entityId, area)
     }
   }
-  // ha-cli serves its local cache while HA restarts (X-Aisis-Cache header).
-  registry = { areaByEntity, entities, fetchedAt: Date.now(),
-    stale: statesResponse.headers.get('x-aisis-cache') === 'stale' }
+  return { areaByEntity, entities, fetchedAt: Date.now(), instance }
+}
+
+// The entity map routes a phrase to a device. A refresh that finds Home Assistant down keeps routing with the last map of the SAME
+// Home Assistant (not when the caller wants live state, or when there is no map yet), so a phrase that is not a home command still
+// reaches the brain. The kept map is marked stale: measurements are never answered from it.
+async function getRegistry (forceRefresh = false): Promise<HaRegistry> {
+  const instance = haInstanceId()
+  const pinned = turnTrace.getStore()?.home
+  // A turn that began on one home never reads the map of another, cached or not.
+  if (pinned !== undefined && pinned !== instance) throw new HaUnreachableError('Home Assistant changed during the turn')
+  if (registry !== null && registry.instance !== instance) registry = null
+  if (!forceRefresh && registry !== null && Date.now() - registry.fetchedAt < REGISTRY_TTL_MS) {
+    return registry
+  }
+  try {
+    const fetched = await fetchRegistry(instance)
+    // The dashboard switched homes while the map was being read: that map belongs to the old one and must not route a command
+    // the next request sends to the new one.
+    if (haInstanceId() !== instance) throw new HaUnreachableError('Home Assistant changed while its entity map was being read')
+    registry = fetched
+  } catch (error) {
+    const down = isTimeoutOrBodyAbort(error) || error instanceof HaConnectionLostError || error instanceof HaUnreachableError
+    if (forceRefresh || registry === null || registry.instance !== instance || !down) throw error
+    logger.warn(`Home Assistant entity map not refreshed, using the last one: ${String(error)}`)
+    return { ...registry, stale: { error } }
+  }
   return registry
 }
 
@@ -520,8 +519,7 @@ function mentionedRoomAreas (s: string): string[] {
   return ROOMS.filter(item => item.keywords.some(keyword => s.includes(keyword))).map(item => item.area)
 }
 
-async function callService (config: { token: string, url: string }, entityId: string,
-  turnOn: boolean): Promise<boolean> {
+async function callService (entityId: string, turnOn: boolean): Promise<void> {
   const domain = entityId.split('.')[0]
   let path = `/api/services/${domain}/${turnOn ? 'turn_on' : 'turn_off'}`
   let body: Record<string, unknown> = { entity_id: entityId }
@@ -530,37 +528,29 @@ async function callService (config: { token: string, url: string }, entityId: st
     path = '/api/services/climate/set_hvac_mode'
     body = { entity_id: entityId, hvac_mode: turnOn ? 'cool' : 'off' }
   }
-  const response = await haServiceFetch(config, path, body)
-  if (response.status === 202) throw restartingError(response)
-  if (!response.ok) throw haFailure(response, `HA ${path} ${entityId}`)
-  return confirmedByHaCli(response)
+  await haCall(path, body, `HA ${path} ${entityId}`)
 }
 
-async function callWholeDomain (config: { token: string, url: string },
-  wholeDomain: 'light', turnOn: boolean): Promise<boolean> {
+async function callWholeDomain (wholeDomain: 'light', turnOn: boolean): Promise<void> {
   // Domain-wide HA calls require entity_id "all".
-  const response = await haServiceFetch(config,
-    `/api/services/${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`, { entity_id: 'all' })
-  if (response.status === 202) throw restartingError(response)
-  if (!response.ok) throw haFailure(response, `HA ${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`)
-  return confirmedByHaCli(response)
+  await haCall(`/api/services/${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`, { entity_id: 'all' },
+    `HA ${wholeDomain}/${turnOn ? 'turn_on' : 'turn_off'}`)
 }
 
-async function currentState (config: { token: string, url: string }, entityId: string): Promise<string | undefined> {
-  const response = await haFetch(config, `/api/states/${entityId}`)
-  // Stale (cached) state must not drive "already on" dedupe answers.
-  if (!response.ok || response.headers.get('x-aisis-cache') === 'stale') return undefined
+async function currentState (entityId: string): Promise<string | undefined> {
+  const response = await haFetch(`/api/states/${entityId}`)
+  if (!response.ok) return undefined
   return (await response.json() as HaEntity).state
 }
 
-async function currentEntity (config: { token: string, url: string }, entityId: string): Promise<HaEntity | undefined> {
-  const response = await haFetch(config, `/api/states/${entityId}`)
-  if (!response.ok || response.headers.get('x-aisis-cache') === 'stale') return undefined
+async function currentEntity (entityId: string): Promise<HaEntity | undefined> {
+  const response = await haFetch(`/api/states/${entityId}`)
+  if (!response.ok) return undefined
   return await response.json() as HaEntity
 }
 
 // «яркость 50» / «кондиционер на 24»: absolute set-points, not on/off.
-async function callSetService (config: { token: string, url: string }, entityId: string, device: DeviceIntent): Promise<boolean> {
+async function callSetService (entityId: string, device: DeviceIntent): Promise<void> {
   const domain = entityId.split('.')[0]
   let path = '/api/services/light/turn_on'
   let body: Record<string, unknown> = { entity_id: entityId, brightness_pct: device.brightnessPct }
@@ -568,27 +558,27 @@ async function callSetService (config: { token: string, url: string }, entityId:
     path = '/api/services/climate/set_temperature'
     body = { entity_id: entityId, temperature: device.temperature }
     // A powered-off IR AC ignores a set-point; an explicit mode starts it (as for «включи»).
-    if ((await currentEntity(config, entityId))?.state === 'off') body.hvac_mode = 'cool'
+    if ((await currentEntity(entityId))?.state === 'off') body.hvac_mode = 'cool'
   }
-  const response = await haServiceFetch(config, path, body)
-  if (response.status === 202) throw restartingError(response)
-  if (!response.ok) throw haFailure(response, `HA ${path} ${entityId}`)
-  return confirmedByHaCli(response)
+  await haCall(path, body, `HA ${path} ${entityId}`)
 }
+
+// Home Assistant reports these when it cannot observe the device: neither state proves a command was carried out.
+const isUnobserved = (state: string): boolean => state === 'unavailable' || state === 'unknown'
 
 function setSatisfied (entity: HaEntity | undefined, device: DeviceIntent): boolean {
   if (entity === undefined) return false
   if (entity.entity_id.startsWith('climate.')) {
-    return entity.state !== 'off' && Math.abs((entity.attributes.temperature ?? Number.NaN) - (device.temperature ?? Number.NaN)) < 0.3
+    return entity.state !== 'off' && !isUnobserved(entity.state) && Math.abs((entity.attributes.temperature ?? Number.NaN) - (device.temperature ?? Number.NaN)) < 0.3
   }
   const brightness = entity.attributes.brightness
   return entity.state === 'on' && typeof brightness === 'number' &&
     Math.abs(brightness / 2.55 - (device.brightnessPct ?? Number.NaN)) <= 6
 }
 
-async function verifySet (config: { token: string, url: string }, device: DeviceIntent): Promise<boolean> {
+async function verifySet (device: DeviceIntent): Promise<boolean> {
   for (let attempt = 0; attempt < 9; attempt++) {
-    const entities = await Promise.all(device.targets.map(entityId => currentEntity(config, entityId)))
+    const entities = await Promise.all(device.targets.map(entityId => currentEntity(entityId)))
     if (entities.every(entity => setSatisfied(entity, device))) return true
     await new Promise(resolve => setTimeout(resolve, 300))
   }
@@ -597,13 +587,13 @@ async function verifySet (config: { token: string, url: string }, device: Device
 
 // Post-execution verification: Zigbee/IR devices settle for seconds, so poll.
 // Returns true once every target reports the desired state.
-async function verifyExecution (config: { token: string, url: string }, device: DeviceIntent): Promise<boolean> {
-  if (device.kind === 'set') return await verifySet(config, device)
+async function verifyExecution (device: DeviceIntent): Promise<boolean> {
+  if (device.kind === 'set') return await verifySet(device)
   const desired = device.kind === 'on' ? 'on' : 'off'
   for (let attempt = 0; attempt < 9; attempt++) {
     if (device.wholeDomain) {
       // «весь свет» covers area-less lights too (гирлянда): check them all.
-      const reg = await getRegistry(config, true)
+      const reg = await getRegistry(true)
       const stillWrong = [...reg.entities.entries()]
         .filter(([entityId, entity]) => entityId.startsWith('light.') && !JUNK_LIGHT.test(entityId) &&
           entity.state !== 'unavailable' && entity.state !== 'unknown')
@@ -612,10 +602,10 @@ async function verifyExecution (config: { token: string, url: string }, device: 
     } else {
       let allMatch = true
       for (const entityId of device.targets) {
-        const state = await currentState(config, entityId)
+        const state = await currentState(entityId)
         const domain = entityId.split('.')[0]
         const matches = domain === 'climate'
-          ? (device.kind === 'on' ? state !== 'off' && state !== undefined : state === 'off')
+          ? (device.kind === 'on' ? state !== 'off' && state !== undefined && !isUnobserved(state) : state === 'off')
           : state === desired
         if (!matches) {
           allMatch = false
@@ -818,10 +808,9 @@ function buildStateReport (reg: HaRegistry, lightsOnly: boolean): string {
     }
   }
   if (on.length === 0) {
-    return reg.stale === true ? 'По последним данным, сейчас ничего не включено.' : 'Сейчас ничего не включено.'
+    return 'Сейчас ничего не включено.'
   }
-  const list = `Сейчас включено: ${on.join(', ')}.`
-  return reg.stale === true ? `По последним данным, ${list[0].toLowerCase()}${list.slice(1)}` : list
+  return `Сейчас включено: ${on.join(', ')}.`
 }
 
 // Stock Alice confirms an executed IoT/volume command with a short chime instead
@@ -850,12 +839,18 @@ const HA_MEDIA_SERVICES: Record<MediaAction, string> = {
   next: 'media_next_track', pause: 'media_pause', previous: 'media_previous_track', resume: 'media_play', stop: 'media_stop'
 }
 
-async function controlHaMedia (config: { token: string, url: string }, action: MediaAction): Promise<boolean> {
-  const reg = await getRegistry(config, true)
+async function controlHaMedia (action: MediaAction): Promise<boolean> {
+  let reg: HaRegistry
+  try {
+    reg = await getRegistry(true)
+  } catch (error) {
+    logger.warn(`Media key not sent to Home Assistant, its entity map is unreadable: ${String(error)}`)
+    return false
+  }
   const wanted = action === 'resume' ? 'paused' : 'playing'
   const target = HA_MEDIA_PLAYERS.find(entityId => reg.entities.get(entityId)?.state === wanted)
   if (target === undefined) return false
-  const response = await haFetch(config, `/api/services/media_player/${HA_MEDIA_SERVICES[action]}`, { entity_id: target })
+  const response = await haServiceFetch(`/api/services/media_player/${HA_MEDIA_SERVICES[action]}`, { entity_id: target })
   return response.ok
 }
 
@@ -863,7 +858,7 @@ async function controlHaMedia (config: { token: string, url: string }, action: M
 // Success is an earcon; stop/pause with nothing playing stays silent (stock firmware answers its
 // own player, and a spoken «поставила на паузу» over nothing is exactly the chatter to avoid). The
 // silent reply keeps the `clear_queue` directive the TextInput «стоп»/«пауза» spotter turn always got.
-async function runMediaControl (config: { token: string, url: string }, action: MediaAction): Promise<FastIntentResult | null> {
+async function runMediaControl (action: MediaAction): Promise<FastIntentResult | null> {
   const silent: FastIntentResult = {
     kind: 'reply',
     quasarDirectives: [{ IsLedSilent: true, Name: 'clear_queue', Payload: encodeProtobufStruct({}), Type: 'client_action' }],
@@ -876,36 +871,34 @@ async function runMediaControl (config: { token: string, url: string }, action: 
   if (outcome === 'done') return done
   if (outcome === 'unsupported') return { kind: 'reply', quasarDirectives: [], text: 'Это играет с телефона, управляй с него.' }
   if (outcome === 'failed') return { kind: 'reply', quasarDirectives: [], text: 'Не получилось.' }
-  if (await controlHaMedia(config, action)) return done
+  if (await controlHaMedia(action)) return done
   return action === 'stop' || action === 'pause' ? silent : null
 }
 
 // Executes a device intent against HA, then VERIFIES the resulting state.
 // Success is an earcon, never speech; failures are always spoken.
-async function executeDeviceIntent (config: { token: string, url: string }, device: DeviceIntent): Promise<FastIntentResult> {
+async function executeDeviceIntent (device: DeviceIntent): Promise<FastIntentResult> {
   const desired = device.kind === 'on' ? 'on' : 'off'
 
   // Single target already in the desired state -> no call, spoken answer.
   // Fresh per-entity GET: the registry is cached for 60s.
   if (device.kind !== 'set' && device.targets.length === 1 && !device.wholeDomain) {
-    if (await currentState(config, device.targets[0]) === desired) {
+    if (await currentState(device.targets[0]) === desired) {
       return { kind: 'reply', quasarDirectives: [], text: alreadyText(device.label, desired) }
     }
   }
 
   const turnOn = device.kind !== 'off'
-  let confirmed: boolean[]
   if (device.kind === 'set') {
-    confirmed = await Promise.all(device.targets.map(entityId => callSetService(config, entityId, device)))
+    await Promise.all(device.targets.map(entityId => callSetService(entityId, device)))
   } else if (device.wholeDomain) {
-    confirmed = [await callWholeDomain(config, device.wholeDomain, turnOn)]
+    await callWholeDomain(device.wholeDomain, turnOn)
   } else {
-    confirmed = await Promise.all(device.targets.map(entityId => callService(config, entityId, turnOn)))
+    await Promise.all(device.targets.map(entityId => callService(entityId, turnOn)))
   }
 
-  // ha-cli already read every device back (X-Aisis-Verify: ok on each call): a second look from here would only add the stale
-  // cached reads of a Home Assistant that went away in between, and report a failure nobody observed.
-  if (confirmed.every(Boolean) || await readBackAfterCommand(() => verifyExecution(config, device))) {
+  // The layer reads every device back itself: a 2xx only says Home Assistant accepted the call.
+  if (await readBackAfterCommand(() => verifyExecution(device))) {
     logger.info(`Fast intent executed: ${device.kind} [${device.targets.join(', ') || device.wholeDomain}]`)
     return { kind: 'reply', quasarDirectives: earconDirectives(turnOn ? 'on' : 'off'), text: null }
   }
@@ -988,7 +981,7 @@ async function answerSettingQuery (id: string): Promise<FastIntentResult> {
   return { kind: 'reply', quasarDirectives: [], text: queryAnswer(entry, live.ok ? live.value : entry.value) }
 }
 
-async function executeResolved (config: { token: string, url: string }, resolved: Resolved, speakerLevel: null | number): Promise<FastIntentResult> {
+async function executeResolved (resolved: Resolved, speakerLevel: null | number): Promise<FastIntentResult> {
   const trace = turnTrace.getStore()
   if (trace !== undefined) trace.executed = { phrase: trace.phrase, resolved: resolved.type === 'setting' ? { ...resolved, confirmed: false } : resolved }
   // The step is read only for a relative ask: live from the dashboard, else the cached value, else 30%.
@@ -998,11 +991,11 @@ async function executeResolved (config: { token: string, url: string }, resolved
   if (resolved.type === 'brain') {
     // A confirmed fuzzy «следущий трек» is still a media key, not a question for the brain.
     const mediaKey = parseMediaControl(resolved.text)
-    const handled = mediaKey === null ? null : await runMediaControl(config, mediaKey)
+    const handled = mediaKey === null ? null : await runMediaControl(mediaKey)
     return handled ?? { kind: 'llm', text: resolved.text }
   }
   if (resolved.type === 'say') return { kind: 'reply', quasarDirectives: [], text: resolved.text }
-  return await executeDeviceIntent(config, resolved.device)
+  return await executeDeviceIntent(resolved.device)
 }
 
 const YES_WORDS = ['да', 'конечно', 'точно', 'правильно', 'угу', 'ага', 'верно', 'давай', 'ок', 'окей', 'валяй', 'делай', 'именно']
@@ -1229,7 +1222,7 @@ function repeatQuestion (resolved: Resolved): null | string {
 
 // «повтори»: say the last answer again; after a silent command run it again (or ask when that is not safe).
 // While a question is still pending the repeat is the question itself.
-async function repeatLast (config: { token: string, url: string }, want: RepeatTarget, speakerLevel: null | number): Promise<FastIntentResult | null> {
+async function repeatLast (want: RepeatTarget, speakerLevel: null | number): Promise<FastIntentResult | null> {
   const station = currentStation()
   const pending = getPending()
   if (pending !== null && Date.now() < pending.expiresAt) {
@@ -1244,7 +1237,7 @@ async function repeatLast (config: { token: string, url: string }, want: RepeatT
   if (want !== 'command' && turn.spoken !== null) return { kind: 'reply', listen: turn.asked, quasarDirectives: [], text: turn.spoken }
   if (turn.action === null) return null
   const question = repeatQuestion(turn.action.resolved)
-  if (question === null) return await executeResolved(config, turn.action.resolved, speakerLevel)
+  if (question === null) return await executeResolved(turn.action.resolved, speakerLevel)
   setPending({ declineToBrain: false, expiresAt: Date.now() + AMBIGUITY_TTL_MS, mode: 'confirm',
     phrase: turn.action.phrase, remember: false, resolved: turn.action.resolved })
   return { kind: 'reply', listen: true, quasarDirectives: [], text: question }
@@ -1286,8 +1279,10 @@ export async function matchFastIntent (rawText: string, options: MatchOptions = 
   const result = outer === undefined
     ? await turnTrace.run(trace, async () => await matchFastIntentCore(rawText, options))
     : await matchFastIntentCore(rawText, options)
-  if (result?.kind === 'reply' && result.listen === true && result.text !== null) noteAsked(result.text, trace.station)
-  if (outer === undefined && !trace.skipRecording && result?.kind === 'reply') {
+  // Whatever the turn worked out (an answer, a question to confirm) belongs to the home it began on.
+  if (outer === undefined && trace.home !== undefined && trace.home !== haInstanceId()) return HOME_CHANGED
+  if (result?.kind === 'reply' && result.listen === true && result.text !== null && trace.home === haInstanceId()) noteAsked(result.text, trace.station)
+  if (outer === undefined && !trace.skipRecording && result?.kind === 'reply' && trace.home === haInstanceId()) {
     const turn: Turn = {
       action: result.text === null ? trace.executed : null,
       asked: result.listen === true && result.text !== null,
@@ -1303,8 +1298,9 @@ export async function matchFastIntent (rawText: string, options: MatchOptions = 
 }
 
 async function matchFastIntentCore (rawText: string, options: MatchOptions): Promise<FastIntentResult | null> {
-  const config = getConfig()
-  if (!config) return null
+  if (!haConnected()) return null
+  forgetOtherHome()
+  if (homeChangedDuringTurn()) return HOME_CHANGED // a re-run inside a turn that was overtaken: never touch the new home's questions
   const text = rawText?.trim()
   if (!text) return null
   const s = normalize(text)
@@ -1319,8 +1315,8 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     const end = parseEndDialog(text)
     if (end !== null) {
       setPending(null)
-      forgetAsked(currentStation())
-      if (end === 'stop' && options.dialogActive !== true) return await runMediaControl(config, 'stop') ?? DIALOG_END
+      forgetAskedOfTurn()
+      if (end === 'stop' && options.dialogActive !== true) return await runMediaControl('stop') ?? DIALOG_END
       return DIALOG_END
     }
 
@@ -1328,7 +1324,7 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     // Without a recent turn the phrase goes on (to the brain, which has the adapter's dialog list).
     const repeat = parseRepeat(tokens)
     if (repeat !== null) {
-      const repeated = await repeatLast(config, repeat, speakerLevel)
+      const repeated = await repeatLast(repeat, speakerLevel)
       if (repeated !== null) {
         if (trace !== undefined) trace.skipRecording = true
         logger.info(`Fast intent repeat (${repeat}) for '${s}': ${repeated.kind === 'reply' ? repeated.text ?? '(command again)' : repeated.text}`)
@@ -1346,15 +1342,15 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
         if (pending.mode === 'fill') {
           // «Какую громкость поставить?» → «семь»; «Громкость или яркость?» → «громкость».
           const filled = answer === 'no' || hasNegation(tokens) ? null : pending.fill?.(parseUtterance(s, ROOMS, [])) ?? null
-          if (filled !== null) return await executeResolved(config, filled, speakerLevel)
+          if (filled !== null) return await executeResolved(filled, speakerLevel)
           if (answer === 'no') {
-            forgetAsked(currentStation())
+            forgetAskedOfTurn()
             return DIALOG_END
           }
         } else if (pending.mode === 'home-or-music') {
           if (answer === 'home') {
             rememberAmbiguity(pending.phrase, 'home')
-            return await executeResolved(config, pending.resolved!, speakerLevel)
+            return await executeResolved(pending.resolved!, speakerLevel)
           }
           if (answer === 'llm') {
             rememberAmbiguity(pending.phrase, 'llm')
@@ -1366,12 +1362,12 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
             const confirmed = pending.resolved!
             // A setting is never «выучено»: its confirmation is asked every time, and «да» marks that this very change was confirmed.
             if (pending.remember !== false && confirmed.type !== 'setting') rememberAmbiguity(pending.phrase, 'home')
-            return await executeResolved(config, confirmed.type === 'setting' ? { ...confirmed, confirmed: true } : confirmed, speakerLevel)
+            return await executeResolved(confirmed.type === 'setting' ? { ...confirmed, confirmed: true } : confirmed, speakerLevel)
           }
           if (answer === 'no') {
             // An explicit refusal («не делай») cancels; sending the phrase on to the brain is for «нет, я про другое». Either way the
             // refused question is no context for what is said next.
-            forgetAsked(currentStation())
+            forgetAskedOfTurn()
             return pending.declineToBrain && !hasNegation(tokens)
               ? { kind: 'llm', text: pending.phrase }
               : DIALOG_END
@@ -1405,7 +1401,7 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
         grammarResult = DIALOG_END
       } else if (grammar.route === 'dialog_end') {
         setPending(null)
-        forgetAsked(currentStation())
+        forgetAskedOfTurn()
         grammarResult = DIALOG_END
       } else if (grammar.route === 'volume' && grammar.volume !== null) {
         const asked = grammar.volume
@@ -1445,11 +1441,9 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     if (tvApp !== null) {
       const outcome = await executeTvAppIntent(tvApp, {
         callScript: async entityId => {
-          const response = await haServiceFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
-          if (response.status === 202) throw restartingError(response)
-          if (!response.ok) throw haFailure(response, 'TV application launch')
+          await haCall('/api/services/script/turn_on', { entity_id: entityId }, 'TV application launch')
         },
-        readNative: async () => await currentEntity(config, 'media_player.televizor')
+        readNative: async () => await currentEntity('media_player.televizor')
       })
       logger.info(`Fast TV application ${tvApp.app}: ${outcome.status}`)
       return outcome.status === 'confirmed'
@@ -1462,12 +1456,10 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     if (fireplace !== null) {
       const outcome = await executeFireplaceIntent(fireplace, {
         callScript: async entityId => {
-          const response = await haServiceFetch(config, '/api/services/script/turn_on', { entity_id: entityId })
-          if (response.status === 202) throw restartingError(response)
-          if (!response.ok) throw haFailure(response, 'Projector fireplace launch')
+          await haCall('/api/services/script/turn_on', { entity_id: entityId }, 'Projector fireplace launch')
         },
-        readNative: async () => await currentEntity(config, 'media_player.home'),
-        readReadiness: async () => await currentEntity(config, 'sensor.living_room_fireplace')
+        readNative: async () => await currentEntity('media_player.home'),
+        readReadiness: async () => await currentEntity('sensor.living_room_fireplace')
       })
       logger.info(`Fast projector fireplace: ${outcome.status}`)
       return outcome.status === 'confirmed'
@@ -1479,13 +1471,18 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
     // Assistant or a phone), else a Home Assistant player. Never the brain: it can only talk.
     const mediaKey = parseMediaControl(s)
     if (mediaKey !== null) {
-      const handled = await runMediaControl(config, mediaKey)
+      const handled = await runMediaControl(mediaKey)
       if (handled !== null) return handled
     }
 
-    const reg = await getRegistry(config)
+    const reg = await getRegistry()
     const area = roomOfSpeaker(reg, options.deviceId)
     const decision = decideFastIntent(text, reg, area)
+    // A value from the map kept through an outage would be told (or kept for a «да») as current. That refresh has just failed:
+    // say so, do not try the same request again.
+    if (reg.stale !== undefined && (decision.tier === 'answer' || decision.tier === 'confirm' && decision.resolved.type === 'say')) {
+      throw reg.stale.error
+    }
     if (decision.tier !== 'llm') logger.info(`Fast intent room for '${s}': ${area} (station ${options.deviceId ?? 'unknown'})`)
     if (decision.tier !== 'reprompt') lastReprompts.delete(currentStation())
     logger.debug(`Fast intent decision '${s}': ${decision.tier} ${'trace' in decision ? decision.trace ?? '' : ''}`)
@@ -1522,17 +1519,17 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
           }
         }
         // State queries only ever ANSWER — execution is impossible by design.
-        const fresh = await getRegistry(config, true)
+        const fresh = await getRegistry(true)
         return { kind: 'reply', quasarDirectives: [], text: buildStateReport(fresh, decision.lightsOnly === true) }
       }
       case 'execute':
         if (decision.via === 'catalog') shadowClassify(text, null, 'catalog')
-        return await executeResolved(config, decision.resolved, speakerLevel)
+        return await executeResolved(decision.resolved, speakerLevel)
       case 'confirm': {
         if (decision.via === 'exact') shadowClassify(text, decision.score ?? null, 'gray')
         else shadowClassify(text, null, 'catalog')
         // A phrase the owner already confirmed once runs directly («выучено»).
-        if (decision.resolved.type !== 'setting' && loadAmbiguityMemory()[s] === 'home') return await executeResolved(config, decision.resolved, speakerLevel)
+        if (decision.resolved.type !== 'setting' && loadAmbiguityMemory()[s] === 'home') return await executeResolved(decision.resolved, speakerLevel)
         setPending({ declineToBrain: decision.declineToBrain, expiresAt: Date.now() + AMBIGUITY_TTL_MS,
           mode: 'confirm', phrase: s, resolved: decision.resolved })
         return { kind: 'reply', listen: true, quasarDirectives: [], text: decision.question }
@@ -1542,7 +1539,7 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
           // Legacy «Свет или музыку?»: the remembered choice skips the question.
           shadowClassify(text, decision.score ?? null, 'gray')
           const remembered = loadAmbiguityMemory()[s]
-          if (remembered === 'home') return await executeResolved(config, decision.resolved!, speakerLevel)
+          if (remembered === 'home') return await executeResolved(decision.resolved!, speakerLevel)
           if (remembered === 'llm') return { kind: 'llm', text: s }
         } else {
           shadowClassify(text, null, 'catalog')
@@ -1560,12 +1557,12 @@ async function matchFastIntentCore (rawText: string, options: MatchOptions): Pro
       }
     }
   } catch (error) {
-    if (error instanceof HaQueuedError) {
-      logger.warn(`Fast intent '${s}' queued: Home Assistant unavailable (${error.down ?? 'no evidence'}, eta ${error.etaSeconds ?? '?'}s)`)
-      return { kind: 'reply', quasarDirectives: [], text: haRecoveryText(error.down) }
+    if (error instanceof HaUnreachableError) {
+      logger.warn(`Fast intent '${s}': Home Assistant unreachable: ${error.message}`)
+      return { kind: 'reply', quasarDirectives: [], text: HA_UNREACHABLE }
     }
     logger.error(`Fast intent '${s}' failed:`, error)
-    if (error instanceof HaCommandError) return { kind: 'reply', quasarDirectives: [], text: error.say }
+    if (error instanceof HaNoAnswerError) return { kind: 'reply', quasarDirectives: [], text: HA_NOT_ANSWERED }
     return { kind: 'reply', quasarDirectives: [], text: 'Не удалось выполнить команду умного дома.' }
   }
 }

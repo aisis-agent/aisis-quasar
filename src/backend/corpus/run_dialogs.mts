@@ -4,11 +4,12 @@
 //   docker exec -w /src/backend/corpus CONTAINER /node_modules/.bin/tsx run_dialogs.mts
 // Checks what the single-turn corpus cannot: confirmation memory («да»/«нет»), slot-fill and
 // choice follow-ups, the earcon directive, sound_set_level for volume, HA service payloads.
-import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 
 const AMBIGUITY_FILE = `/tmp/ha-ambiguity-dialogs-${process.pid}.json`
-process.env.AISIS_HA_URL = 'http://ha.test'
-process.env.AISIS_HA_TOKEN = 'test-token'
+const HA_STORE_FILE = `/tmp/ha-store-dialogs-${process.pid}.json`
+writeFileSync(HA_STORE_FILE, JSON.stringify({ auth: { kind: 'long_lived', token: 'test-token' }, client_id: '', connected_at: 0, name: 'test', url: 'http://ha.test', uuid: 'test', version: 1 }))
+process.env.AISIS_HA_STORE = HA_STORE_FILE
 process.env.AISIS_HA_AMBIGUITY_FILE = AMBIGUITY_FILE
 process.env.SEMANTIC_INTENTS = 'off'
 rmSync(AMBIGUITY_FILE, { force: true })
@@ -517,5 +518,6 @@ for (const phrase of ['десять', 'громкость в моей жизни
 }
 
 rmSync(AMBIGUITY_FILE, { force: true })
+rmSync(HA_STORE_FILE, { force: true })
 console.log(`\nДИАЛОГИ: ${total - failed}/${total}`)
 process.exit(failed === 0 ? 0 : 1)
