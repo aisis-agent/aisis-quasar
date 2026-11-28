@@ -118,6 +118,16 @@ export function haBaseUrl (): null | string {
   return loadConnection()?.url ?? null
 }
 
+function instanceOf (connection: Connection): string {
+  return connection.uuid === '' ? `url:${connection.url}` : `uuid:${connection.uuid}`
+}
+
+/** Which Home Assistant is connected: its uuid (it survives an address change), else the address; null without a store. */
+export function haInstanceId (): null | string {
+  const connection = loadConnection()
+  return connection === null ? null : instanceOf(connection)
+}
+
 // One fetch, with its failure classified (see the header). `signal` firing is not a transport failure and passes through.
 async function transport (request: () => Promise<Response>, what: string, signal: AbortSignal): Promise<Response> {
   try {
@@ -232,15 +242,18 @@ async function attempt (connection: Connection, path: string, body: unknown, sig
  * re-read once and, if the address changed, the request is retried against the new one (never after a connection that broke
  * midway: a POST may already have been executed).
  */
-export async function haRequest (path: string, body: unknown, signal: AbortSignal): Promise<Response> {
+export async function haRequest (path: string, body: unknown, signal: AbortSignal, instance?: null | string): Promise<Response> {
   const connection = loadConnection()
   if (connection === null) throw new HaUnreachableError('no Home Assistant connection store')
+  // A turn that began on one home never sends its entity ids to another one the dashboard has connected since.
+  if (instance !== undefined && instanceOf(connection) !== instance) throw new HaUnreachableError('Home Assistant changed during the turn')
   try {
     return await attempt(connection, path, body, signal)
   } catch (error) {
     if (!(error instanceof HaUnreachableError) || error instanceof HaRevokedError) throw error
     const fresh = loadConnection(true)
     if (fresh === null || fresh.url === connection.url) throw error
+    if (instance !== undefined && instanceOf(fresh) !== instance) throw new HaUnreachableError('Home Assistant changed during the turn')
     logger.info(`Home Assistant moved: ${connection.url} -> ${fresh.url}`)
     return await attempt(fresh, path, body, signal)
   }

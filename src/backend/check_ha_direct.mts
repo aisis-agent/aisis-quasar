@@ -38,7 +38,8 @@ interface FakeHa {
   serviceDrop: boolean           // a service call is executed, then the connection is cut without an answer
   leaveUnchanged: boolean        // a service call is answered 200 but the device does not change
   serviceStatus: number
-  lights: Record<string, { area: string, state: string }>
+  lights: Record<string, { area: string, attrs?: Record<string, unknown>, state: string }>
+  climateObservable: boolean     // a climate service call is carried out; false: the unit reports `unavailable` afterwards
   minted: number
   server: Server
   url: string
@@ -46,14 +47,14 @@ interface FakeHa {
 
 async function startHa (): Promise<FakeHa> {
   const ha: FakeHa = {
-    accepted: new Set(), authHeaders: [], calls: [], leaveUnchanged: false, lights: {
+    accepted: new Set(), authHeaders: [], calls: [], climateObservable: true, leaveUnchanged: false, lights: {
       'light.gostinaya': { area: 'Гостиная', state: 'on' },
       'light.kukhnya': { area: 'Кухня', state: 'on' }
     }, minted: 0, providersAuth: [], providersDelayMs: 0, providersStatus: 200, readBodyStallAfterCallMs: 0, readBodyStallMs: 0,
     readDelayAfterCallMs: 0, readDelayMs: 0, serviceDelayMs: 0, serviceDrop: false, serviceStatus: 200,
     server: null as unknown as Server, tokenDelayMs: 0, tokenForms: [], tokenLifetime: 1800, tokenMode: 'ok', url: ''
   }
-  const entity = (id: string) => ({ attributes: { friendly_name: id }, entity_id: id, state: ha.lights[id].state })
+  const entity = (id: string) => ({ attributes: { friendly_name: id, ...ha.lights[id].attrs }, entity_id: id, state: ha.lights[id].state })
   const respond = (response: ServerResponse, status: number, value: unknown, delayMs = 0, stallMs = 0) => {
     setTimeout(() => {
       if (response.destroyed) return
@@ -93,11 +94,16 @@ async function startHa (): Promise<FakeHa> {
       if (url === '/api/template') {
         return read(Object.entries(ha.lights).map(([id, light]) => `${id}\t${id}\t${light.area}\n`).join(''))
       }
-      const one = /^\/api\/states\/(light\.\w+)$/.exec(url)
+      const one = /^\/api\/states\/((?:light|climate|sensor)\.\w+)$/.exec(url)
       if (one !== null && ha.lights[one[1]] !== undefined) return read(entity(one[1]))
       if (url.startsWith('/api/services/')) {
         const turn = /\/light\/turn_(on|off)$/.exec(url)
-        const body = raw === '' ? {} : JSON.parse(raw) as { entity_id?: string }
+        const body = raw === '' ? {} : JSON.parse(raw) as { entity_id?: string, hvac_mode?: string, temperature?: number }
+        const unit = ha.lights[body.entity_id ?? '']
+        if (ha.serviceStatus === 200 && /\/climate\/set_temperature$/.test(url) && unit !== undefined) {
+          unit.attrs = { ...unit.attrs, temperature: body.temperature }
+          unit.state = ha.climateObservable ? body.hvac_mode ?? unit.state : 'unavailable'
+        }
         if (ha.serviceStatus === 200 && turn !== null && !ha.leaveUnchanged) {
           const ids = body.entity_id === 'all' ? Object.keys(ha.lights) : [body.entity_id ?? '']
           for (const id of ids) if (ha.lights[id] !== undefined) ha.lights[id].state = turn[1]
@@ -129,13 +135,13 @@ async function deadUrl (): Promise<string> {
 
 // ── the store ───────────────────────────────────────────────────────────────────────────────────────────────────────
 type StoreAuth = { kind: 'long_lived', token: string } | { kind: 'oauth', refresh_token: string }
-const storeBody = (url: string, auth: StoreAuth, name = 'Home') => JSON.stringify({
-  auth, client_id: 'http://192.168.0.56:8781/', connected_at: 1.7e9, name, url, uuid: 'uuid-1', version: 1
+const storeBody = (url: string, auth: StoreAuth, name = 'Home', uuid = 'uuid-1') => JSON.stringify({
+  auth, client_id: 'http://192.168.0.56:8781/', connected_at: 1.7e9, name, url, uuid, version: 1
 })
 // The way the dashboard writes it: a temporary file renamed over the store.
-function writeStore (url: string, auth: StoreAuth): void {
+function writeStore (url: string, auth: StoreAuth, uuid = 'uuid-1'): void {
   const tmp = `${STORE}.tmp`
-  writeFileSync(tmp, storeBody(url, auth))
+  writeFileSync(tmp, storeBody(url, auth, 'Home', uuid))
   renameSync(tmp, STORE)
 }
 
@@ -165,6 +171,7 @@ const UNREACHABLE = 'Home Assistant недоступен.'
 const TIMEOUT = 'Home Assistant не ответил вовремя, результат команды не проверен.'
 const REAL_ERROR = 'Не удалось выполнить команду умного дома.'
 const PHRASE = 'выключи свет на кухне'
+const HOME_CHANGED = 'Home Assistant переключили, результат команды не проверен. Повтори, если нужно.'
 
 // Fresh state for one scenario: the store, the fakes' bookkeeping, the layer's token cache.
 function scenario (ha: FakeHa, auth: StoreAuth, url = ha.url): void {
@@ -189,7 +196,8 @@ function scenario (ha: FakeHa, auth: StoreAuth, url = ha.url): void {
     fake.providersStatus = 200
     fake.leaveUnchanged = false
     fake.accepted.clear()
-    for (const light of Object.values(fake.lights)) light.state = 'on'
+    for (const [id, light] of Object.entries(fake.lights)) if (id.startsWith('light.')) light.state = 'on'
+    fake.climateObservable = true
   }
   ha.accepted.add('LLAT')
 }
@@ -396,6 +404,92 @@ Date.now = () => realNow() + 120_000 // the cached entity map is expired: the re
 result = await ask('расскажи анекдот')
 Date.now = realNow
 check('HA down, expired entity map: a non-home phrase goes on to the brain (null or llm, never «недоступен»)', result === null || result.kind === 'llm', show(result))
+
+// ── another Home Assistant is another home: its entity map is not routed with the old one ──────────────────────────────
+scenario(ha1, LONG)
+ha2.accepted.add('LLAT')
+await ask() // the entity map of the first Home Assistant (uuid-1): light.kukhnya is its kitchen
+const ha2Lights = ha2.lights
+ha2.lights = { 'light.gostinaya': { area: 'Кухня', state: 'on' }, 'light.kukhnya': { area: 'Спальня', state: 'on' } } // same ids, other rooms
+writeStore(ha2.url, LONG, 'uuid-2') // another instance, within the 60 s of the cached map
+result = await ask()
+check('other instance: «свет на кухне» switches that home\'s kitchen light, not the id that was the kitchen in the old home',
+  earcon(result) && ha2.lights['light.gostinaya'].state === 'off' && ha2.lights['light.kukhnya'].state === 'on',
+  `${show(result)} gostinaya=${ha2.lights['light.gostinaya'].state} kukhnya=${ha2.lights['light.kukhnya'].state}`)
+ha2.lights = ha2Lights
+
+// ── a measurement is read live: the map kept through an outage never tells an old value as current ───────────────────────
+scenario(ha1, LONG)
+ha1.lights['sensor.gostinaya_temperature'] = { area: 'Гостиная', attrs: { device_class: 'temperature', unit_of_measurement: '°C' }, state: '22.5' }
+Date.now = () => realNow() + 120_000 // expired: the next turn reads the entity map again, sensor included
+result = await ask('какая температура в гостиной')
+Date.now = realNow
+check('measurement: told from live data', result?.kind === 'reply' && /22/.test(result.text ?? ''), show(result))
+scenario(ha1, LONG, await deadUrl())
+Date.now = () => realNow() + 240_000 // expired again, and Home Assistant is gone
+result = await ask('какая температура в гостиной')
+Date.now = realNow
+check('measurement during an outage: «недоступен», not the value of the kept map', says(result, UNREACHABLE), show(result))
+delete ha1.lights['sensor.gostinaya_temperature']
+
+// ── a unit that reports `unavailable` after a command has not done it ──────────────────────────────────────────────────
+scenario(ha1, LONG)
+ha1.lights['climate.kondei_1'] = { area: 'Гостиная', attrs: { hvac_modes: ['cool', 'heat', 'off'], max_temp: 30, min_temp: 16, temperature: 25 }, state: 'off' }
+Date.now = () => realNow() + 300_000
+result = await ask('поставь кондиционер на 22 градуса')
+Date.now = realNow
+check('climate: a unit that follows is confirmed (earcon)', earcon(result) && ha1.lights['climate.kondei_1'].state === 'cool' && ha1.lights['climate.kondei_1'].attrs?.temperature === 22, `${show(result)} state=${ha1.lights['climate.kondei_1'].state}`)
+ha1.lights['climate.kondei_1'].state = 'off'
+ha1.climateObservable = false
+Date.now = () => realNow() + 420_000
+result = await ask('поставь кондиционер на 22 градуса')
+Date.now = realNow
+check('climate: `unavailable` after the command is not success (no earcon)', !earcon(result) && result?.kind === 'reply' && result.text !== null, show(result))
+delete ha1.lights['climate.kondei_1']
+
+// ── what was remembered in one home is not run in another ──────────────────────────────────────────────────────────────
+const OTHER_HOME = (): FakeHa['lights'] => ({ 'light.gostinaya': { area: 'Кухня', state: 'on' }, 'light.kukhnya': { area: 'Спальня', state: 'on' } })
+const serviceCalls = (ha: FakeHa) => ha.calls.filter(call => call.startsWith('POST /api/services/'))
+scenario(ha1, LONG)
+await ask() // light.kukhnya (the kitchen of the first home) is what «повтори» would repeat
+ha2.accepted.add('LLAT')
+ha2.lights = OTHER_HOME()
+writeStore(ha2.url, LONG, 'uuid-2')
+ha2.calls.length = 0
+result = await ask('повтори')
+check('other instance: «повтори» does not run the old home\'s command', serviceCalls(ha2).length === 0 && ha2.lights['light.kukhnya'].state === 'on', `${show(result)} ${ha2.calls.join(' | ')}`)
+ha2.lights = ha2Lights
+
+scenario(ha1, LONG)
+ha2.accepted.add('LLAT')
+ha2.lights = OTHER_HOME()
+await ask() // the first home's map is cached
+ha1.readDelayMs = 700
+Date.now = () => realNow() + 700_000 // expired: this turn reads the first home's map again, and that read takes 0.7 s
+const racing = ask()
+await new Promise<void>(resolve => setTimeout(resolve, 250))
+writeStore(ha2.url, LONG, 'uuid-2') // the dashboard connects the other home while the read is under way
+ha2.calls.length = 0
+result = await racing
+Date.now = realNow
+check('other instance during the map read: no command reaches the new home', serviceCalls(ha2).length === 0 && ha2.lights['light.kukhnya'].state === 'on' && !earcon(result), `${show(result)} ${ha2.calls.join(' | ')}`)
+ha2.lights = ha2Lights
+
+scenario(ha1, LONG)
+ha2.accepted.add('LLAT')
+ha2.lights = OTHER_HOME()
+await ask() // the first home's map is cached and fresh
+ha1.lights['light.kukhnya'].state = 'on'
+ha1.readDelayMs = 700 // the state read before the command is under way when the dashboard connects the other home
+const midTurn = ask()
+await new Promise<void>(resolve => setTimeout(resolve, 250))
+writeStore(ha2.url, LONG, 'uuid-2')
+ha2.calls.length = 0
+result = await midTurn
+check('other instance during the turn: the old home\'s entity ids never reach the new home', serviceCalls(ha2).length === 0 && ha2.lights['light.kukhnya'].state === 'on' && says(result, HOME_CHANGED), `${show(result)} ${ha2.calls.join(' | ')}`)
+result = await ask('да')
+check('other instance during the turn: nothing it left behind is run in the new home by a «да»', serviceCalls(ha2).length === 0 && ha2.lights['light.kukhnya'].state === 'on', `${show(result)} ${ha2.calls.join(' | ')}`)
+ha2.lights = ha2Lights
 
 // ── no store ────────────────────────────────────────────────────────────────────────────────────────────────────────
 scenario(ha1, LONG)

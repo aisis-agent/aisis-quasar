@@ -81,7 +81,7 @@ Same as upstream: the `Dockerfile` installs with pnpm and runs `pnpm start` (`ts
 
 ```sh
 git clone --recurse-submodules https://github.com/alex-mextner/aisis-quasar
-git -C aisis-quasar archive aisis-volume-zero-e859a37b | docker build -t aisis-quasar:from-source -
+git -C aisis-quasar archive aisis | docker build -t aisis-quasar:from-source -   # the branch head (or a later tag) reads the connection store; tags up to aisis-bg-admission-safety-20261120 read AISIS_HA_URL/AISIS_HA_TOKEN instead
 docker run --rm -v /path/to/aisis-ha:/run/aisis-ha:ro aisis-quasar:from-source   # plus the ports, Postgres and keys quasar-server needs
 ```
 
